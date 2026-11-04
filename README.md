@@ -10,9 +10,7 @@ to the quarter hour for billing.
 The running timer is also shown at the right of the prompt footer, so you can
 see it in every session without asking:
 
-```
-ABC-123 login | my-repo · ▶ ABC-123 1h 05m +1 running
-```
+![The prompt footer: session name, project and the running timer](docs/footer.png)
 
 ## Install
 
@@ -54,6 +52,8 @@ Without a task name, `on`, `pause`, `resume` and `off` act on the session's
 task: the session name (`/rename ABC-123 login`) when it is a known task, or
 else the first ticket key in it. When that does not resolve, Claude asks which
 task to act on.
+
+![/timer status and /timer day in a Claude Code session](docs/session.png)
 
 Overlapping tasks each count the full wall time by default; `--split` divides
 shared time between them. Use the split figures when billing.
