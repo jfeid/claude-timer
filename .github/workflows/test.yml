@@ -1,0 +1,26 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  timer-sh:
+    name: timer.sh on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tool versions
+        shell: bash
+        run: |
+          bash --version | head -1
+          date --version 2>/dev/null | head -1 || echo "date: not GNU (BSD)"
+          jq --version || echo "jq: missing"
+      - name: Test timer.sh
+        shell: bash
+        run: bash tests/timer-cli.sh

@@ -112,6 +112,7 @@ PATH), and `jq` for reading the session name.
 claude --plugin-dir .          load this folder for one session
 claude plugin validate .
 claude plugin test .
+bash tests/timer-cli.sh        timer.sh end to end (CI runs it on Linux, macOS, Windows)
 ```
 
 ## License
