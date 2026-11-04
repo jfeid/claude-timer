@@ -81,6 +81,25 @@ TIMER_SESSION_ID=../x run "unsafe id is ignored" 0 session-task
 [ ! -e "$TIMER_HOME/x" ] && echo "ok     no file outside sessions/" || { echo "FAIL   wrote outside sessions/"; fails=$((fails + 1)); }
 run "off --all" 0 off --all
 
+echo "== nested repositories"
+# A session that named a task in outer/ keeps to that project after the
+# shell moves into outer/inner/, a repository of its own.
+NEST=$(mktemp -d)
+mkdir -p "$NEST/outer/inner"
+git -C "$NEST/outer" init -q && git -C "$NEST/outer/inner" init -q
+( cd "$NEST/outer" && TIMER_PROJECT= TIMER_SESSION_ID=s-nest "$T" on NEST-1 >/dev/null )
+out=$(cd "$NEST/outer/inner" && TIMER_PROJECT= TIMER_SESSION_ID=s-nest "$T" off 2>&1)
+has "NEST-1 stopped"
+out=$(cd "$NEST/outer/inner" && TIMER_PROJECT= TIMER_SESSION_ID=s-nest "$T" where 2>&1)
+has "/logs/outer.tsv"
+# Without a session, the inner repository is its own project.
+out=$(cd "$NEST/outer/inner" && TIMER_PROJECT= TIMER_SESSION_ID= "$T" where 2>&1)
+has "/logs/inner.tsv"
+# TIMER_PROJECT still wins.
+out=$(cd "$NEST/outer/inner" && TIMER_PROJECT=forced TIMER_SESSION_ID=s-nest "$T" where 2>&1)
+has "/logs/forced.tsv"
+rm -rf "$NEST"
+
 echo "== failed writes"
 # Windows ignores chmod, so a read-only folder cannot be made there.
 case "$(uname -s)" in

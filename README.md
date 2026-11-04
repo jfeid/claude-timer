@@ -54,6 +54,10 @@ with an option for all of them when there are several:
 
 ![/timer off asking which task to stop](docs/ask.png)
 
+**The project** is the git repository the session started in. Once the
+session has named a task, the project stays that task's project, even after
+Claude's shell moves into a nested repository such as `internal/`.
+
 ![/timer status and /timer list in a Claude Code session](docs/session.png)
 
 Overlapping tasks each count the full wall time by default; `--split` divides
@@ -103,7 +107,7 @@ Settings, as environment variables:
 | Variable | Default | Effect |
 |---|---|---|
 | `TIMER_HOME` | `~/.claude/timer` | where `logs/` and `sessions/` live |
-| `TIMER_PROJECT` | git top-level folder name | force the project name |
+| `TIMER_PROJECT` | the session task's project, else the git top-level folder name | force the project name |
 | `TIMER_QUARTER` | `900` | rounding step in seconds |
 
 ## What the mod does

@@ -5,8 +5,8 @@ import type { Footer, TimerState } from '../types'
 
 // Shows "PROJECT · ▶ TASK 1h 05m" at the right of the prompt footer.
 // Reads the same files as bin/timer.sh, resolved the same way:
-// project = basename of the git top level of the session's root folder (or
-// TIMER_PROJECT), task = the
+// project = TIMER_PROJECT, else the project of the session's named task, else
+// the basename of the git top level of the session's root folder; task = the
 // session's task, which timer.sh keeps in <TIMER_HOME>/sessions/<session id>.
 // No file of Claude Code's own is read.
 
@@ -62,6 +62,17 @@ export function boundTask(sessionFile: string, project: string): string | null {
     if (p === project && t) task = t
   }
   return task
+}
+
+// Same as timer.sh's project_slug() in a session: the project of the
+// session file's last line, the project the session last named a task in.
+export function boundProject(sessionFile: string): string | null {
+  let project: string | null = null
+  for (const line of sessionFile.split('\n')) {
+    const [p, t] = line.split('\t')
+    if (p && t) project = p
+  }
+  return project
 }
 
 // Session ids timer.sh accepts as a file name.
@@ -164,12 +175,15 @@ async function refresh($: EngineInterface): Promise<void> {
   busy = true
   try {
     const root = await timerHome($)
-    const [project, id] = await Promise.all([
-      projectSlug($, await $.session.root()),
-      $.session.id(),
-    ])
-    const log = await readIfExists($, `${root}/logs/${project}.tsv`)
+    const id = await $.session.id()
     const binding = isSafeId(id) ? await readIfExists($, `${root}/sessions/${id}`) : ''
+    // As timer.sh: TIMER_PROJECT, else the project of the session's named
+    // task, else the git top level of the session's root folder.
+    const project =
+      (await $.env.get('TIMER_PROJECT')) ||
+      boundProject(binding) ||
+      (await projectSlug($, await $.session.root()))
+    const log = await readIfExists($, `${root}/logs/${project}.tsv`)
     const now = Math.floor((await $.clock.now()) / 1000)
     const next = pick(boundTask(binding, project), project, totals(log, now))
     await update($, footer, () => next)

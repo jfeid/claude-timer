@@ -31,7 +31,8 @@
 #
 # Log lives at ~/.claude/timer/logs/<project>.tsv, so timers survive session
 # restarts and several projects can run their own timers at the same time.
-# Override the project with TIMER_PROJECT=name.
+# Override the project with TIMER_PROJECT=name. In a session that has named a
+# task, the project stays that task's project wherever the shell moves.
 #
 # The session's task is the last single task named with on, pause, resume or
 # off in that session, kept in ~/.claude/timer/sessions/<session id>. The id
@@ -44,12 +45,31 @@ ROOT="${TIMER_HOME:-$HOME/.claude/timer}"
 LOGDIR="$ROOT/logs"
 QUARTER="${TIMER_QUARTER:-900}"   # rounding granularity in seconds
 
+# This session's task: the last single task named with on, pause, resume or
+# off in this session and project. Kept by this script in
+# $ROOT/sessions/<session id> as "project<TAB>task" lines, the last for a
+# project winning. Files untouched for 30 days are removed.
+SESSION_ID="${TIMER_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+SESSION_FILE=""
+case "$SESSION_ID" in
+    ""|*[!A-Za-z0-9_-]*) ;;
+    *) SESSION_FILE="$ROOT/sessions/$SESSION_ID" ;;
+esac
+
+# The project: TIMER_PROJECT; else, in a session that has named a task, that
+# task's project, so a shell that moved into a nested repository (say
+# internal/) still logs to the session's project; else the folder name of the
+# git top level, or of the current folder outside git.
 project_slug() {
+    local top bound
     if [ -n "${TIMER_PROJECT:-}" ]; then
         echo "$TIMER_PROJECT"
         return
     fi
-    local top
+    if [ -n "$SESSION_FILE" ] && [ -r "$SESSION_FILE" ]; then
+        bound=$(awk -F'\t' 'NF>=2 { p=$1 } END { if (p!="") print p }' "$SESSION_FILE")
+        if [ -n "$bound" ]; then echo "$bound"; return; fi
+    fi
     top=$(git rev-parse --show-toplevel 2>/dev/null)
     [ -z "$top" ] && top="$(pwd)"
     # printf avoids basename's trailing newline becoming a stray "-"
@@ -156,17 +176,6 @@ tasks_in_state() {
 all_known_tasks() { awk -F'\t' 'NF{print $1}' "$LOG" | awk '!seen[$0]++'; }
 
 last_task() { awk -F'\t' 'NF{t=$1} END{if(t!="") print t}' "$LOG"; }
-
-# This session's task: the last single task named with on, pause, resume or
-# off in this session and project. Kept by this script in
-# $ROOT/sessions/<session id> as "project<TAB>task" lines, the last for a
-# project winning. Files untouched for 30 days are removed.
-SESSION_ID="${TIMER_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
-SESSION_FILE=""
-case "$SESSION_ID" in
-    ""|*[!A-Za-z0-9_-]*) ;;
-    *) SESSION_FILE="$ROOT/sessions/$SESSION_ID" ;;
-esac
 
 session_task() {
     [ -n "$SESSION_FILE" ] && [ -r "$SESSION_FILE" ] || return 0

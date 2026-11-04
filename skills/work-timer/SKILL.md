@@ -60,8 +60,9 @@ Examples:
    the plugin is enabled. If the shell cannot find it, run
    `${CLAUDE_PLUGIN_ROOT}/bin/timer.sh` instead.
 
-   The script picks the log file from the current git repository name, so run it
-   from inside the project. Set `TIMER_PROJECT=<name>` to override.
+   The script picks the log file from the project of the session's task once
+   the session has named one, else from the current git repository name, so
+   run it from inside the project. Set `TIMER_PROJECT=<name>` to override.
 
 3. Report the script's output back plainly. For `off`, `list`, `report`, `day` and `month`,
    show the tables as printed. Do not editorialise; the numbers are the answer.

@@ -5,6 +5,7 @@ import {
   answerArgv,
   asBlock,
   bashFromExecPath,
+  boundProject,
   boundTask,
   candidates,
   fmt,
@@ -47,6 +48,11 @@ describe('log parsing', () => {
     expect(boundTask(file, 'other')).toBe('ZZZ-1')
     expect(boundTask(file, 'none')).toBe(null)
     expect(boundTask('', 'proj')).toBe(null)
+  })
+
+  test("the session's project is the project of its last named task", async () => {
+    expect(boundProject('outer\tA-1\ninner\tB-1\nouter\tA-2\n')).toBe('outer')
+    expect(boundProject('')).toBe(null)
   })
 
   test('session ids are file names only', async () => {
