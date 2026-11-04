@@ -179,13 +179,13 @@ async function refresh($: EngineInterface): Promise<void> {
   }
 }
 
-// Text symbols only: ⏸ and ⏹ are emoji, drawn two columns wide on Windows
-// Terminal and over the next character.
-const ICON: Record<TimerState, string> = {
-  RUNNING: '▶',
-  PAUSED: '‖',
-  STOPPED: '■',
-  NONE: '■',
+// ⏸ and ⏹ where the terminal draws them as text. Windows Terminal draws
+// them as two-column emoji over the next character, so Windows (a C:\ plugin
+// folder) gets plain text symbols.
+export function icons(isWindows: boolean): Record<TimerState, string> {
+  return isWindows
+    ? { RUNNING: '▶', PAUSED: '‖', STOPPED: '■', NONE: '■' }
+    : { RUNNING: '▶', PAUSED: '⏸', STOPPED: '⏹', NONE: '⏹' }
 }
 const COLOR: Record<TimerState, 'success' | 'warning' | 'error'> = {
   RUNNING: 'success',
@@ -315,9 +315,10 @@ export const register: Register = on => {
     const f = await read($, footer)
     if (!f) return next(e)
     const { Box, Text } = $.ui.resolve(e)
+    const icon = icons(isWindowsPath($.plugin.root))
     const timer = f.task
-      ? `${ICON[f.state]} ${f.task} ${fmt(f.seconds)}`
-      : `${ICON.NONE} no timer`
+      ? `${icon[f.state]} ${f.task} ${fmt(f.seconds)}`
+      : `${icon.NONE} no timer`
     return (
       <Box>
         {e.props.modes.length > 0 && (

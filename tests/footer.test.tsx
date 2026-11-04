@@ -8,6 +8,7 @@ import {
   boundTask,
   candidates,
   fmt,
+  icons,
   isSafeId,
   isWindowsPath,
   pick,
@@ -96,6 +97,14 @@ describe('log parsing', () => {
   test('multi-line output is fenced, one line is not', async () => {
     expect(asBlock('ABC-1 started')).toBe('ABC-1 started')
     expect(asBlock('TASK\n----')).toBe('\n```\nTASK\n----\n```')
+  })
+
+  test('pause and stop icons: emoji symbols, plain text on Windows', async () => {
+    expect(icons(false).PAUSED).toBe('⏸')
+    expect(icons(false).STOPPED).toBe('⏹')
+    expect(icons(true).PAUSED).toBe('‖')
+    expect(icons(true).NONE).toBe('■')
+    expect(icons(true).RUNNING).toBe(icons(false).RUNNING)
   })
 
   test('format', async () => {
