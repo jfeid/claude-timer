@@ -1,16 +1,21 @@
 name: test
 
-# Changes to docs and images alone do not run the tests.
+# Changes to docs and images alone do not run the tests. The skill's
+# SKILL.md is code for Claude, so it is not in this list.
 on:
   push:
     paths-ignore:
-      - '**.md'
+      - 'README.md'
+      - 'PRIVACY.md'
+      - 'SECURITY.md'
       - 'docs/**'
       - 'LICENSE'
       - '.claude-plugin/icon.png'
   pull_request:
     paths-ignore:
-      - '**.md'
+      - 'README.md'
+      - 'PRIVACY.md'
+      - 'SECURITY.md'
       - 'docs/**'
       - 'LICENSE'
       - '.claude-plugin/icon.png'

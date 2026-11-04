@@ -122,18 +122,24 @@ describe('the question when no task can be picked', () => {
     expect(candidates('Nothing to stop.')).toEqual([])
   })
 
-  test('All for two or more, Cancel beside one, four options at most', async () => {
-    expect(question('off', ['A', 'B']).options).toEqual(['A', 'B', 'All'])
-    expect(question('on', ['A']).options).toEqual(['A', 'Cancel'])
-    expect(question('off', ['A', 'B', 'C', 'D', 'E']).options).toEqual(['A', 'B', 'C', 'All'])
+  test('all tasks for two or more, no change beside one, four options at most', async () => {
+    expect(question('off', ['A', 'B']).options).toEqual(['A', 'B', 'All listed tasks'])
+    expect(question('on', ['A']).options).toEqual(['A', 'Change nothing'])
+    expect(question('off', ['A', 'B', 'C', 'D', 'E']).options).toEqual(['A', 'B', 'C', 'All listed tasks'])
     expect(question('pause', ['A']).text).toBe('Which task for /timer pause?')
   })
 
   test('the answer becomes the arguments', async () => {
     expect(answerArgv('off', 'ABC-2')).toEqual(['off', 'ABC-2'])
-    expect(answerArgv('off', 'All')).toEqual(['off', '--all'])
-    expect(answerArgv('on', 'Cancel')).toBe(null)
+    expect(answerArgv('off', 'All listed tasks')).toEqual(['off', '--all'])
+    expect(answerArgv('on', 'Change nothing')).toBe(null)
     expect(answerArgv('on', ' NEW-7 ')).toEqual(['on', 'NEW-7'])
+  })
+
+  test('tasks named All or Cancel are tasks, not choices', async () => {
+    expect(question('off', ['All', 'OTHER-1']).options).toEqual(['All', 'OTHER-1', 'All listed tasks'])
+    expect(answerArgv('off', 'All')).toEqual(['off', 'All'])
+    expect(answerArgv('on', 'Cancel')).toEqual(['on', 'Cancel'])
   })
 })
 
@@ -255,7 +261,7 @@ test('/timer asks which task when the script cannot pick one', async ($, on) => 
 
   const r = await $.command.run({ ...TYPED, command: 'timer', args: 'off' })
   expect(asked?.question).toBe('Which task for /timer off?')
-  expect(asked?.options.map(o => o.label)).toEqual(['ABC-1', 'ABC-2', 'All'])
+  expect(asked?.options.map(o => o.label)).toEqual(['ABC-1', 'ABC-2', 'All listed tasks'])
   expect(runs.map(x => x.argv)).toEqual([['off'], ['off', 'ABC-2']])
   expect(r.text).toBe('ABC-2 stopped — 10m (600s)')
 })

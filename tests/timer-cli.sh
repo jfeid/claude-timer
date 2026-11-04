@@ -88,7 +88,16 @@ case "$(uname -s)" in
         RO=$(mktemp -d); chmod 500 "$RO"
         TIMER_HOME="$RO" run "unwritable log fails" 1 on ABC-9; has "cannot write"
         printf '%s\n' "$out" | grep -q started && { echo "FAIL   printed started"; fails=$((fails + 1)); } || echo "ok     no 'started'"
-        chmod 700 "$RO"; rm -rf "$RO" ;;
+        chmod 700 "$RO"; rm -rf "$RO"
+        # The session task cannot be saved: nothing is started, and the old
+        # session task is not used by a later bare off.
+        TIMER_SESSION_ID=s-ro run "bind OLD-9" 0 on OLD-9
+        chmod 444 "$TIMER_HOME/sessions/s-ro"
+        TIMER_SESSION_ID=s-ro run "unsaved session task fails" 1 on NEW-9; has "cannot save this session's task"
+        run "NEW-9 was not started" 0 list running
+        printf '%s\n' "$out" | grep -q NEW-9 && { echo "FAIL   NEW-9 started"; fails=$((fails + 1)); } || echo "ok     NEW-9 not started"
+        chmod 644 "$TIMER_HOME/sessions/s-ro"
+        TIMER_SESSION_ID=s-ro run "off OLD-9" 0 off OLD-9 ;;
 esac
 
 echo "== fixed history (2026-01-15, UTC)"

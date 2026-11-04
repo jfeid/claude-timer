@@ -214,19 +214,25 @@ export function candidates(out: string): string[] {
   return m?.[1] ? m[1].split(',').map(t => t.trim()).filter(Boolean) : []
 }
 
-// The question for the person: up to four options, "All" (the --all form)
-// when there are two or more tasks, "Cancel" beside a single one. A task
-// past the first three is typed under the dialog's Other.
+// The two choices that are not a task. Their labels hold a space, which no
+// task name can (timer.sh splits names on spaces and commas), so a task
+// named All or Cancel is never read as one of them.
+export const ALL_TASKS = 'All listed tasks'
+export const NO_CHANGE = 'Change nothing'
+
+// The question for the person: up to four options, ALL_TASKS (the --all
+// form) when there are two or more tasks, NO_CHANGE beside a single one. A
+// task past the first three is typed under the dialog's Other.
 export function question(verb: string, tasks: string[]): { text: string; options: string[] } {
-  const options = tasks.length >= 2 ? [...tasks.slice(0, 3), 'All'] : [...tasks, 'Cancel']
+  const options = tasks.length >= 2 ? [...tasks.slice(0, 3), ALL_TASKS] : [...tasks, NO_CHANGE]
   return { text: `Which task for /timer ${verb}?`, options }
 }
 
 // timer.sh arguments for the answer, or null when nothing should run.
 export function answerArgv(verb: string, answer: string): string[] | null {
   const a = answer.trim()
-  if (!a || a === 'Cancel') return null
-  if (a === 'All') return [verb, '--all']
+  if (!a || a === NO_CHANGE) return null
+  if (a === ALL_TASKS) return [verb, '--all']
   return [verb, ...timerArgv(a)]
 }
 

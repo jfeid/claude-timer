@@ -1,4 +1,4 @@
-# <img src=".claude-plugin/icon.png" alt="" width="40" align="top"> Claude Code timer
+# ![Worklog Timer icon](docs/icon-40.png) Claude Code timer
 
 [![test](https://github.com/jfeid/claude-timer/actions/workflows/test.yml/badge.svg)](https://github.com/jfeid/claude-timer/actions/workflows/test.yml)
 
@@ -50,7 +50,7 @@ the same actions.
 with `on`, `pause`, `resume` or `off`. After `/timer on ABC-123`, a plain
 `/timer pause`, `/timer on` or `/timer off` acts on ABC-123. When there is no
 such task, or it is in the wrong state, you are asked which task to act on,
-with `All` when there are several:
+with an option for all of them when there are several:
 
 ![/timer off asking which task to stop](docs/ask.png)
 

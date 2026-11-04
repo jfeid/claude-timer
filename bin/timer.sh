@@ -174,14 +174,20 @@ session_task() {
 }
 
 # bind_session LIST: remember LIST as this session's task when it is one task.
+# Runs before the action: when the task cannot be saved, the script stops
+# without acting, so a later bare on/pause/off never falls back on an older
+# session task the person did not mean.
 bind_session() {
     local t
     [ -n "$SESSION_FILE" ] || return 0
     t=$(printf '%s\n' "$1" | awk 'NF')
     [ -n "$t" ] && [ "$(printf '%s\n' "$t" | wc -l | tr -d ' ')" = 1 ] || return 0
     [ "$(session_task)" = "$t" ] && return 0
-    mkdir -p "$ROOT/sessions" 2>/dev/null &&
-        printf '%s\t%s\n' "$PROJECT" "$t" 2>/dev/null >> "$SESSION_FILE"
+    if ! mkdir -p "$ROOT/sessions" 2>/dev/null ||
+       ! printf '%s\t%s\n' "$PROJECT" "$t" 2>/dev/null >> "$SESSION_FILE"; then
+        echo "timer: cannot save this session's task to $SESSION_FILE; nothing changed" >&2
+        exit 1
+    fi
     find "$ROOT/sessions" -type f -mtime +30 -exec rm -f {} + 2>/dev/null
     return 0
 }
