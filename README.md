@@ -115,8 +115,8 @@ bash (3.2 or later) and the usual shell tools. Nothing else is required:
   only) the script, `/timer` and the skill do not work.
 
 Used daily on Linux. CI runs the script's tests on Linux, macOS and Windows
-(Git Bash); the `/timer` command and the footer are tested on Linux only so
-far. Reports from other platforms are welcome in the issues.
+(Git Bash); the `/timer` command and the footer are tested on Linux and
+Windows (Windows Terminal with Git for Windows), not yet on macOS. Reports from other platforms are welcome in the issues.
 
 ## Develop
 
