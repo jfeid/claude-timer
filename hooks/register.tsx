@@ -233,6 +233,13 @@ export function timerArgv(args: string): string[] {
   return args.replace(/["']/g, '').trim().split(/\s+/).filter(Boolean)
 }
 
+// Command output is drawn as Markdown after a "timer: " label, where a line
+// of dashes under a table header turns it into a heading. Fence tables, on
+// their own lines, so columns and rules stay.
+export function asBlock(out: string): string {
+  return out.includes('\n') ? '\n```\n' + out + '\n```' : out
+}
+
 async function runTimer(
   $: EngineInterface,
   argv: string[],
@@ -305,9 +312,9 @@ export const register: Register = on => {
       // A prompt submitted from inside this run would wait on the run itself;
       // send it once the command has finished.
       $.clock.after(50, () => void $.prompt.submit({ text }))
-      return { text: out }
+      return { text: asBlock(out) }
     }
-    return { text: out, context: [`${shown} printed:\n${out}`] }
+    return { text: asBlock(out), context: [`${shown} printed:\n${out}`] }
   }).catch(($, e, next) => (next.called ? next(e) : { text: 'timer: the command failed to run' }))
 
   // Pick up /timer on|pause|off at once instead of on the next tick.

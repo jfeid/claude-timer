@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import {
+  asBlock,
   bashFromExecPath,
   fmt,
   isWindowsPath,
@@ -87,6 +88,11 @@ describe('log parsing', () => {
       'C:/Program Files/Git/bin/bash.exe',
     )
     expect(bashFromExecPath('/usr/lib/git-core')).toBe(null)
+  })
+
+  test('multi-line output is fenced, one line is not', async () => {
+    expect(asBlock('ABC-1 started')).toBe('ABC-1 started')
+    expect(asBlock('TASK\n----')).toBe('\n```\nTASK\n----\n```')
   })
 
   test('format', async () => {
