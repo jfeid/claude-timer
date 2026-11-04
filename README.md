@@ -25,6 +25,9 @@ At the prompt of a Claude Code terminal session:
 Answer `y` to add the marketplace, then pick a scope (user scope loads it in
 every session). From a shell: `claude plugin install timer --marketplace jfeid/claude-timer`.
 
+On Windows, install [Git for Windows](https://gitforwindows.org/) first; see
+[Requirements](#requirements).
+
 ## Use
 
 ```
@@ -102,7 +105,13 @@ Settings, as environment variables:
 
 ## Requirements
 
-bash (3.2 or later) and the usual shell tools. Nothing else is required:
+- bash (3.2 or later) and the usual shell tools: present on Linux and macOS.
+- Windows: [Git for Windows](https://gitforwindows.org/), which provides Git
+  Bash. `/timer` runs the script with it, found through
+  `CLAUDE_CODE_GIT_BASH_PATH` or next to `git`. Without it (PowerShell only)
+  the script, `/timer` and the skill do not work.
+
+Optional:
 
 - `jq` is used for reading the session name when installed; without it a
   plain text match is used.
@@ -110,13 +119,11 @@ bash (3.2 or later) and the usual shell tools. Nothing else is required:
   `brew install coreutils` on macOS) `day` takes anything `date -d` reads,
   such as `"last friday"`. With the macOS `date` it takes `today`,
   `yesterday`, `tomorrow` or `YYYY-MM-DD`.
-- Windows: Git for Windows. `/timer` runs the script with its Git Bash, found
-  through `CLAUDE_CODE_GIT_BASH_PATH` or next to `git`. Without it (PowerShell
-  only) the script, `/timer` and the skill do not work.
 
 Used daily on Linux. CI runs the script's tests on Linux, macOS and Windows
 (Git Bash); the `/timer` command and the footer are tested on Linux and
-Windows (Windows Terminal with Git for Windows), not yet on macOS. Reports from other platforms are welcome in the issues.
+Windows (Windows Terminal with Git for Windows), not yet on macOS. Reports
+from other platforms are welcome in the issues.
 
 ## Develop
 
