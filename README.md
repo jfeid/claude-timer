@@ -1,5 +1,7 @@
 # Claude Code timer
 
+[![test](https://github.com/jfeid/claude-timer/actions/workflows/test.yml/badge.svg)](https://github.com/jfeid/claude-timer/actions/workflows/test.yml)
+
 A Claude Code plugin for tracking work time per task. Timers are kept per
 project (the git repository) and survive session restarts, so a timer started
 in one session can be paused or stopped from another. Reports round time up
@@ -100,11 +102,18 @@ Settings, as environment variables:
 
 ## Requirements
 
-Tested on Linux. macOS and Windows are not tested yet; reports are welcome
-in the issues.
+bash (3.2 or later) and the usual shell tools. Nothing else is required:
 
-bash, GNU `date` (on macOS: `brew install coreutils` and put its `gnubin` on
-PATH), and `jq` for reading the session name.
+- `jq` is used for reading the session name when installed; without it a
+  plain text match is used.
+- Dates: with GNU `date` (Linux, Git Bash on Windows, or `gdate` from
+  `brew install coreutils` on macOS) `day` takes anything `date -d` reads,
+  such as `"last friday"`. With the macOS `date` it takes `today`,
+  `yesterday`, `tomorrow` or `YYYY-MM-DD`.
+
+Used daily on Linux. CI runs the script's tests on Linux, macOS and Windows
+(Git Bash); the `/timer` command and the footer are tested on Linux only so
+far. Reports from other platforms are welcome in the issues.
 
 ## Develop
 

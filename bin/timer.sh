@@ -16,7 +16,7 @@
 #   timer.sh day [DATE] [--all] [--split] [--tsv]
 #                                    full-day report: per-task time clipped to that day,
 #                                    wall clock and a timeline (DATE: today, yesterday,
-#                                    YYYY-MM-DD or anything `date -d` accepts; --all reads
+#                                    YYYY-MM-DD or anything GNU `date -d` accepts; --all reads
 #                                    every project log; --tsv prints machine-readable rows)
 #   timer.sh month [MM-YYYY] [--all] [--split] [--tsv]
 #                                    every day of the month with records: per-day and per-task
@@ -59,6 +59,57 @@ touch "$LOG"
 now() { date +%s; }
 stamp() { date '+%Y-%m-%d %H:%M:%S'; }
 
+# ---- dates: GNU date (Linux, Git Bash, gdate on macOS) or BSD date (macOS) ---
+
+if date -d @0 +%s >/dev/null 2>&1; then GDATE=date
+elif command -v gdate >/dev/null 2>&1; then GDATE=gdate
+else GDATE=""; fi
+
+# YYYY-MM-DD for a date spec. BSD date knows today, yesterday, tomorrow and
+# YYYY-MM-DD; anything else ("last friday") needs GNU date.
+day_of() {
+    local spec="${1:-today}"
+    if [ -n "$GDATE" ]; then "$GDATE" -d "$spec" +%Y-%m-%d 2>/dev/null; return; fi
+    case "$spec" in
+        today)     date +%Y-%m-%d ;;
+        yesterday) date -v-1d +%Y-%m-%d ;;
+        tomorrow)  date -v+1d +%Y-%m-%d ;;
+        [0-9][0-9][0-9][0-9]-[0-9]*-[0-9]*)
+            date -j -f %Y-%m-%d "$spec" +%Y-%m-%d 2>/dev/null ;;
+        *)  echo "macOS date reads today, yesterday, tomorrow or YYYY-MM-DD;" \
+                 "install coreutils (brew install coreutils) for '$spec'." >&2
+            return 1 ;;
+    esac
+}
+
+# Epoch of local midnight at the start of YYYY-MM-DD.
+midnight() {
+    if [ -n "$GDATE" ]; then "$GDATE" -d "$1 00:00:00" +%s
+    else date -j -f '%Y-%m-%d %H:%M:%S' "$1 00:00:00" +%s; fi
+}
+
+# YYYY-MM-DD plus N days, or plus N months (N may be negative).
+add_days() {
+    if [ -n "$GDATE" ]; then "$GDATE" -d "$1 $(signed "$2") day" +%Y-%m-%d
+    else date -j -v"$(signed_bsd "$2")"d -f %Y-%m-%d "$1" +%Y-%m-%d; fi
+}
+add_months() {
+    if [ -n "$GDATE" ]; then "$GDATE" -d "$1 $(signed "$2") month" +%Y-%m-%d
+    else date -j -v"$(signed_bsd "$2")"m -f %Y-%m-%d "$1" +%Y-%m-%d; fi
+}
+signed() { if [ "$1" -lt 0 ]; then echo "- $(( -$1 ))"; else echo "+ $1"; fi; }
+signed_bsd() { if [ "$1" -lt 0 ]; then echo "$1"; else echo "+$1"; fi; }
+
+# Format an epoch, or a YYYY-MM-DD, with a strftime format.
+fmt_epoch() {
+    if [ -n "$GDATE" ]; then "$GDATE" -d "@$1" "+$2"; else date -r "$1" "+$2"; fi
+}
+fmt_day() {
+    if [ -n "$GDATE" ]; then "$GDATE" -d "$1" "+$2"; else date -j -f %Y-%m-%d "$1" "+$2"; fi
+}
+# The same, as an awk command prefix: cmd = DAY_CMD " " day " +%a"
+if [ -n "$GDATE" ]; then DAY_CMD="LC_ALL=C $GDATE -d"; else DAY_CMD="LC_ALL=C date -j -f %Y-%m-%d"; fi
+
 # Comma/space separated list -> newline separated, deduped, order preserved.
 split_tasks() {
     echo "$*" | tr ',' ' ' | tr -s ' ' '\n' | awk 'NF && !seen[$0]++'
@@ -90,16 +141,26 @@ all_known_tasks() { awk -F'\t' 'NF{print $1}' "$LOG" | awk '!seen[$0]++'; }
 
 last_task() { awk -F'\t' 'NF{t=$1} END{if(t!="") print t}' "$LOG"; }
 
+# A top-level string field of a JSON file: jq when installed, else a plain
+# match (enough for the flat files Claude Code writes; escapes are not decoded).
+json_str() {
+    if command -v jq >/dev/null 2>&1; then
+        jq -r --arg k "$2" '.[$k] // empty' "$1" 2>/dev/null
+    else
+        sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -1
+    fi
+}
+
 # Name of the Claude Code session this shell runs in (empty outside a session).
 session_name() {
     if [ -n "${TIMER_SESSION_NAME:-}" ]; then printf '%s' "$TIMER_SESSION_NAME"; return; fi
     local f name=""
     if [ -n "${CLAUDE_PID:-}" ] && [ -r "$HOME/.claude/sessions/$CLAUDE_PID.json" ]; then
-        name=$(jq -r '.name // empty' "$HOME/.claude/sessions/$CLAUDE_PID.json" 2>/dev/null)
+        name=$(json_str "$HOME/.claude/sessions/$CLAUDE_PID.json" name)
     fi
     if [ -z "$name" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
         f=$(find "$HOME/.claude/projects" -maxdepth 3 -path "*/$CLAUDE_CODE_SESSION_ID/custom-title.json" 2>/dev/null | head -1)
-        [ -n "$f" ] && name=$(jq -r '.customTitle // empty' "$f" 2>/dev/null)
+        [ -n "$f" ] && name=$(json_str "$f" customTitle)
     fi
     printf '%s' "$name"
 }
@@ -222,11 +283,12 @@ split_totals() {
 # DAY, DAY_START, DAY_END (epoch, end exclusive).
 day_bounds() {
     local d
-    d=$(date -d "${1:-today}" +%Y-%m-%d 2>/dev/null) || return 1
+    d=$(day_of "${1:-today}") || return 1
+    [ -n "$d" ] || return 1
     DAY="$d"
-    DAY_START=$(date -d "$d 00:00:00" +%s)
-    # "00:00:00 + 1 day" would parse "+ 1" as a UTC+1 zone; add the day to the date alone.
-    DAY_END=$(date -d "$(date -d "$d + 1 day" +%Y-%m-%d) 00:00:00" +%s)
+    DAY_START=$(midnight "$d")
+    # Add the day to the date alone: "00:00:00 + 1 day" would read "+ 1" as a UTC+1 zone.
+    DAY_END=$(midnight "$(add_days "$d" 1)")
 }
 
 # Intervals of the given logs clipped to [DAY_START, DAY_END), sorted by start:
@@ -288,7 +350,7 @@ day_split() {
         }'
 }
 
-hm() { date -d "@$1" '+%H:%M'; }
+hm() { fmt_epoch "$1" '%H:%M'; }
 
 cmd_day() {
     local want_split=0 want_all=0 want_tsv=0 when="" a files ivs tots
@@ -321,7 +383,7 @@ cmd_day() {
         return
     fi
 
-    echo "Day: $DAY ($(LC_ALL=C date -d "$DAY" +%A))   $([ "$want_all" = "1" ] && echo "Projects: all" || echo "Project: $PROJECT")"
+    echo "Day: $DAY ($(LC_ALL=C fmt_day "$DAY" %A))   $([ "$want_all" = "1" ] && echo "Projects: all" || echo "Project: $PROJECT")"
     if [ -z "$(printf '%s' "$ivs" | awk 'NF')" ]; then
         echo "No time tracked on $DAY."
         return
@@ -392,7 +454,7 @@ month_bounds() {
     local in="${1:-}" m y
     case "$in" in
         "")                 m=$(date +%m); y=$(date +%Y) ;;
-        last|prev|previous) in=$(date -d "$(date +%Y-%m-01) -1 month" +%Y-%m); y=${in%-*}; m=${in#*-} ;;
+        last|prev|previous) in=$(add_months "$(date +%Y-%m-01)" -1); in=${in%-*}; y=${in%-*}; m=${in#*-} ;;
         *)
             if [[ "$in" =~ ^([0-9]{1,2})[-/.]([0-9]{4})$ ]]; then m=${BASH_REMATCH[1]}; y=${BASH_REMATCH[2]}
             elif [[ "$in" =~ ^([0-9]{4})[-/.]([0-9]{1,2})$ ]]; then y=${BASH_REMATCH[1]}; m=${BASH_REMATCH[2]}
@@ -401,8 +463,8 @@ month_bounds() {
     m=$((10#$m))
     [ "$m" -ge 1 ] && [ "$m" -le 12 ] || return 1
     MONTH=$(printf '%04d-%02d' "$((10#$y))" "$m")
-    MONTH_START=$(date -d "$MONTH-01 00:00:00" +%s)
-    MONTH_END=$(date -d "$(date -d "$MONTH-01 + 1 month" +%Y-%m-%d) 00:00:00" +%s)
+    MONTH_START=$(midnight "$MONTH-01")
+    MONTH_END=$(midnight "$(add_months "$MONTH-01" 1)")
 }
 
 # Per-day, per-task rows for every day of the month that has records:
@@ -411,9 +473,9 @@ month_bounds() {
 month_rows() {
     local split="$1" i=0 d ivs per wall tomorrow
     shift
-    tomorrow=$(date -d "tomorrow 00:00:00" +%s)
+    tomorrow=$(midnight "$(add_days "$(date +%Y-%m-%d)" 1)")
     while :; do
-        d=$(date -d "$MONTH-01 + $i day" +%Y-%m-%d); i=$((i+1))
+        d=$(add_days "$MONTH-01" "$i"); i=$((i+1))
         day_bounds "$d"
         { [ "$DAY_START" -ge "$MONTH_END" ] || [ "$DAY_START" -ge "$tomorrow" ]; } && break
         ivs=$(day_intervals "$@" | awk 'NF')
@@ -455,7 +517,7 @@ cmd_month() {
         return
     fi
 
-    echo "Month: $MONTH ($(LC_ALL=C date -d "$MONTH-01" '+%B %Y'))   $([ "$want_all" = "1" ] && echo "Projects: all" || echo "Project: $PROJECT")$([ "$want_split" = "1" ] && echo "   Overlaps: split")"
+    echo "Month: $MONTH ($(LC_ALL=C fmt_day "$MONTH-01" '%B %Y'))   $([ "$want_all" = "1" ] && echo "Projects: all" || echo "Project: $PROJECT")$([ "$want_split" = "1" ] && echo "   Overlaps: split")"
     if [ -z "$(printf '%s' "$rows" | awk 'NF')" ]; then
         echo "No time tracked in $MONTH."
         return
@@ -466,11 +528,11 @@ cmd_month() {
     # Per day
     printf '%-11s %-4s %-6s %-9s %-9s %s\n' DATE DAY TASKS TRACKED BILLABLE WALL
     printf '%s\n' "----------------------------------------------------------------"
-    printf '%s\n' "$rows" | awk -F'\t' "$awk_fmt"'
+    printf '%s\n' "$rows" | awk -F'\t' -v daycmd="$DAY_CMD" "$awk_fmt"'
         NF { if (!($1 in n)) { order[++k]=$1; w[$1]=$6 } n[$1]++; s[$1]+=$4; r[$1]+=$5 }
         END {
             for (i=1;i<=k;i++) { d=order[i]
-                cmd="LC_ALL=C date -d " d " +%a"; cmd | getline wd; close(cmd)
+                cmd=daycmd " " d " +%a"; cmd | getline wd; close(cmd)
                 printf "%-11s %-4s %-6d %-9s %-9s %s\n", d, wd, n[d], fmt(s[d]), fmt(r[d]), fmt(w[d])
                 ts+=s[d]; tr+=r[d]; tw+=w[d] }
             print "----------------------------------------------------------------"

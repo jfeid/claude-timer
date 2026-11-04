@@ -74,5 +74,19 @@ has "Billable: 1h 30m = 1.50 hours over 1 day(s)"
 run "report --split" 0 report --split
 has "OLD-1                  1h 12m     1h 15m"
 
+echo "== session name"
+mkdir -p "$TIMER_HOME/.claude/sessions"
+printf '{"pid":4242,"sessionId":"s-1","name":"ABC-7 login fix","cwd":"/x"}\n' \
+    > "$TIMER_HOME/.claude/sessions/4242.json"
+HOME="$TIMER_HOME" CLAUDE_PID=4242 TIMER_SESSION_NAME="" run "session-name from the session file" 0 session-name
+has "ABC-7 login fix"
+# The same field read without jq: only sed and head on PATH.
+mkdir -p "$TIMER_HOME/nojq"
+ln -s "$(command -v sed)" "$TIMER_HOME/nojq/sed"
+ln -s "$(command -v head)" "$TIMER_HOME/nojq/head"
+out=$(PATH="$TIMER_HOME/nojq" "$BASH" -c "$(sed -n '/^json_str()/,/^}/p' "$T")"'
+    json_str "$1" name' _ "$TIMER_HOME/.claude/sessions/4242.json" 2>&1)
+has "ABC-7 login fix"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all checks passed"; else echo "$fails check(s) failed"; exit 1; fi
