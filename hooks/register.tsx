@@ -63,9 +63,10 @@ export function pick(
   session: string,
   project: string,
   all: Totals,
+  isUserName = true,
 ): Footer {
   const running = [...all].filter(([, r]) => r.state === 'RUNNING').map(([t]) => t)
-  const own = sessionTask(session, all)
+  const own = isUserName ? sessionTask(session, all) : null
   const ownRow = own ? all.get(own) : undefined
   // The session's own task wins whenever it has a timer; otherwise show
   // what is running in this project, so a forgotten timer is still visible.
@@ -149,14 +150,22 @@ async function findGitBash($: EngineInterface): Promise<string | null> {
 }
 
 // The session's name, from ~/.claude/sessions/<pid>.json (the file whose
-// sessionId is ours), as timer.sh reads it.
+// sessionId is ours), as timer.sh reads it. `isUser` is false for a name
+// Claude generated (nameSource "derived"), which never points at a task.
+type SessionName = { name: string; isUser: boolean }
+const UNNAMED: SessionName = { name: '', isUser: false }
 let sessionFile: string | null = null
-async function sessionName($: EngineInterface, home: string): Promise<string> {
+async function sessionName($: EngineInterface, home: string): Promise<SessionName> {
   const id = await $.session.id()
-  const readName = async (path: string): Promise<string | null> => {
+  const readName = async (path: string): Promise<SessionName | null> => {
     try {
-      const j = JSON.parse(await $.fs.read(path)) as { sessionId?: string; name?: string }
-      return j.sessionId === id ? (j.name ?? '') : null
+      const j = JSON.parse(await $.fs.read(path)) as {
+        sessionId?: string
+        name?: string
+        nameSource?: string
+      }
+      if (j.sessionId !== id) return null
+      return { name: j.name ?? '', isUser: j.nameSource !== 'derived' }
     } catch {
       return null
     }
@@ -176,7 +185,7 @@ async function sessionName($: EngineInterface, home: string): Promise<string> {
       return name
     }
   }
-  return ''
+  return UNNAMED
 }
 
 let busy = false
@@ -194,7 +203,7 @@ async function refresh($: EngineInterface): Promise<void> {
     const logPath = `${root}/logs/${project}.tsv`
     const log = (await $.fs.exists(logPath)) ? await $.fs.read(logPath) : ''
     const now = Math.floor((await $.clock.now()) / 1000)
-    const next = pick(session, project, totals(log, now))
+    const next = pick(session.name, project, totals(log, now), session.isUser)
     await update($, footer, () => next)
   } catch (err) {
     $.ui.log(`timer: refresh failed: ${String(err)}`, { to: 'debug' })
@@ -229,7 +238,7 @@ async function runTimer(
   argv: string[],
 ): Promise<{ code: number; out: string }> {
   const home = await homeDir($)
-  const session = await sessionName($, home).catch(() => '')
+  const session = await sessionName($, home).catch(() => UNNAMED)
   const script = `${$.plugin.root}/bin/timer.sh`
   let cmd = [script]
   if (isWindowsPath($.plugin.root)) {
@@ -246,7 +255,7 @@ async function runTimer(
     cwd: await $.session.cwd(),
     // The script finds the session name from CLAUDE_PID, which a mod's child
     // may not have; hand it the name the footer already resolved.
-    env: session ? { TIMER_SESSION_NAME: session } : {},
+    env: session.isUser && session.name ? { TIMER_SESSION_NAME: session.name } : {},
     timeoutMs: 30_000,
   })
   const out = [r.stdout, r.stderr].map(s => s.trimEnd()).filter(Boolean).join('\n')

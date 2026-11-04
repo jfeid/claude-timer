@@ -152,11 +152,14 @@ json_str() {
 }
 
 # Name of the Claude Code session this shell runs in (empty outside a session).
+# A name Claude generated (nameSource "derived") counts as no name: it never
+# points at a task.
 session_name() {
     if [ -n "${TIMER_SESSION_NAME:-}" ]; then printf '%s' "$TIMER_SESSION_NAME"; return; fi
     local f name=""
-    if [ -n "${CLAUDE_PID:-}" ] && [ -r "$HOME/.claude/sessions/$CLAUDE_PID.json" ]; then
-        name=$(json_str "$HOME/.claude/sessions/$CLAUDE_PID.json" name)
+    f="$HOME/.claude/sessions/${CLAUDE_PID:-}.json"
+    if [ -n "${CLAUDE_PID:-}" ] && [ -r "$f" ] && [ "$(json_str "$f" nameSource)" != derived ]; then
+        name=$(json_str "$f" name)
     fi
     if [ -z "$name" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
         f=$(find "$HOME/.claude/projects" -maxdepth 3 -path "*/$CLAUDE_CODE_SESSION_ID/custom-title.json" 2>/dev/null | head -1)

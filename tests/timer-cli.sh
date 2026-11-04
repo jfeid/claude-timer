@@ -85,6 +85,11 @@ out=$("$BASH" -c 'command() { [ "$1 $2" = "-v jq" ] && return 1; builtin command
     '"$(sed -n '/^json_str()/,/^}/p' "$T")"'
     json_str "$1" name' _ "$TIMER_HOME/.claude/sessions/4242.json" 2>&1)
 has "ABC-7 login fix"
+# A name Claude generated is not a task name.
+printf '{"pid":4243,"sessionId":"s-2","name":"johnf-45","nameSource":"derived"}\n' \
+    > "$TIMER_HOME/.claude/sessions/4243.json"
+HOME="$TIMER_HOME" CLAUDE_PID=4243 TIMER_SESSION_NAME="" run "generated session name is ignored" 0 session-name
+[ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ] && echo "ok     empty" || { echo "FAIL   expected empty, got: $out"; fails=$((fails + 1)); }
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all checks passed"; else echo "$fails check(s) failed"; exit 1; fi

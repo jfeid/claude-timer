@@ -48,6 +48,14 @@ describe('log parsing', () => {
     expect(f.othersRunning).toBe(1)
   })
 
+  test('a generated session name is not read as a task', async () => {
+    // As a user's name, xyz-9 would pick XYZ-9; generated, the first running shows.
+    const f = pick('xyz-9', 'proj', totals(LOG, NOW), false)
+    expect(f.session).toBe('xyz-9')
+    expect(f.task).toBe('ABC-556')
+    expect(pick('xyz-9', 'proj', totals(LOG, NOW)).task).toBe('XYZ-9')
+  })
+
   test('without a session task, a running one shows', async () => {
     const f = pick('timer-status-ui', 'proj', totals(LOG, NOW))
     expect(f.task).toBe('ABC-556')
