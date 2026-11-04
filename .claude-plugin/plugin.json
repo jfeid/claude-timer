@@ -1,7 +1,7 @@
 {
   "name": "timer",
   "displayName": "Timer",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Per-task work timers that survive session restarts, with day and month billable reports, and the running timer shown in the prompt footer",
   "author": {
     "name": "jfeid",

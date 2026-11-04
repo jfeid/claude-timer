@@ -77,7 +77,7 @@ allows it for itself.
 
 - `SESSION` is the session name (`/rename`), `PROJECT` the timer project.
 - `TIMER` is the session's task when it has a timer, else the first running
-  task of the project. `▶` running, `⏸` paused, `⏹` stopped or no timer.
+  task of the project. `▶` running, `‖` paused, `■` stopped or no timer.
 - `+N running`: other tasks of the project running at the same time.
 
 It refreshes every 30 seconds, right after any `timer.sh` call, and on each

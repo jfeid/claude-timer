@@ -203,11 +203,13 @@ async function refresh($: EngineInterface): Promise<void> {
   }
 }
 
+// Text symbols only: ⏸ and ⏹ are emoji, drawn two columns wide on Windows
+// Terminal and over the next character.
 const ICON: Record<TimerState, string> = {
   RUNNING: '▶',
-  PAUSED: '⏸',
-  STOPPED: '⏹',
-  NONE: '⏹',
+  PAUSED: '‖',
+  STOPPED: '■',
+  NONE: '■',
 }
 const COLOR: Record<TimerState, 'success' | 'warning' | 'error'> = {
   RUNNING: 'success',
