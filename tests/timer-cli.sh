@@ -80,11 +80,9 @@ printf '{"pid":4242,"sessionId":"s-1","name":"ABC-7 login fix","cwd":"/x"}\n' \
     > "$TIMER_HOME/.claude/sessions/4242.json"
 HOME="$TIMER_HOME" CLAUDE_PID=4242 TIMER_SESSION_NAME="" run "session-name from the session file" 0 session-name
 has "ABC-7 login fix"
-# The same field read without jq: only sed and head on PATH.
-mkdir -p "$TIMER_HOME/nojq"
-ln -s "$(command -v sed)" "$TIMER_HOME/nojq/sed"
-ln -s "$(command -v head)" "$TIMER_HOME/nojq/head"
-out=$(PATH="$TIMER_HOME/nojq" "$BASH" -c "$(sed -n '/^json_str()/,/^}/p' "$T")"'
+# The same field read without jq: `command -v jq` answers "not found".
+out=$("$BASH" -c 'command() { [ "$1 $2" = "-v jq" ] && return 1; builtin command "$@"; }
+    '"$(sed -n '/^json_str()/,/^}/p' "$T")"'
     json_str "$1" name' _ "$TIMER_HOME/.claude/sessions/4242.json" 2>&1)
 has "ABC-7 login fix"
 
