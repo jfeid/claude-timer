@@ -1,16 +1,18 @@
 {
-  "name": "timer",
-  "displayName": "Timer",
-  "version": "0.2.6",
+  "name": "worklog-timer",
+  "displayName": "Worklog Timer",
+  "version": "0.3.0",
   "description": "Per-task work timers that survive session restarts, with day and month billable reports, and the running timer shown in the prompt footer",
   "author": {
-    "name": "jfeid",
+    "name": "Giannis Feidaros",
+    "email": "info@maxweb.gr",
     "url": "https://github.com/jfeid"
   },
   "homepage": "https://github.com/jfeid/claude-timer",
   "repository": "https://github.com/jfeid/claude-timer",
   "documentationUrl": "https://github.com/jfeid/claude-timer#readme",
   "supportUrl": "https://github.com/jfeid/claude-timer/issues",
+  "privacyPolicyUrl": "https://github.com/jfeid/claude-timer/blob/main/PRIVACY.md",
   "license": "MIT",
   "keywords": [
     "timer",

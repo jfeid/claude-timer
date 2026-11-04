@@ -24,3 +24,18 @@ jobs:
       - name: Test timer.sh
         shell: bash
         run: bash tests/timer-cli.sh
+
+  mod:
+    name: plugin validation and mod tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code && claude --version
+      - name: Validate
+        run: claude plugin validate --strict .
+      - name: Mod tests
+        run: claude plugin test .

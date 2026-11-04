@@ -2,10 +2,9 @@
 # Session-agnostic work timer. Tracks time per task, per project, across sessions.
 #
 #   timer.sh on [task,...|--all]     start or resume; without a task: the session's task
-#                                    (resumed, restarted, or started when the name is a
-#                                    ticket key), else exit 2 listing the paused tasks or
-#                                    the last task so the caller can ask (--all: old
-#                                    behaviour, every paused task or the last one)
+#                                    (resumed or restarted), else exit 2 listing the paused
+#                                    tasks or the last task so the caller can ask (--all:
+#                                    every paused task or the last one)
 #   timer.sh pause [task,...|--all]  pause; the session's task when running, else exit 2
 #                                    listing the running tasks (--all: every running task)
 #   timer.sh resume [task,...|--all] resume; same resolution over the paused tasks
@@ -23,15 +22,17 @@
 #                                    tracked and billable time (per task per day, rounded up to
 #                                    the quarter, then summed); default: current month
 #   timer.sh tasks                   list known task names
-#   timer.sh session-name            name of the Claude Code session this shell runs in
+#   timer.sh session-task            the task this session last named
 #   timer.sh cancel <task>           erase a task's entries entirely
 #
 # Log lives at ~/.claude/timer/logs/<project>.tsv, so timers survive session
 # restarts and several projects can run their own timers at the same time.
-# Override the project with TIMER_PROJECT=name, the session name with TIMER_SESSION_NAME.
+# Override the project with TIMER_PROJECT=name.
 #
-# Session name comes from ~/.claude/sessions/$CLAUDE_PID.json (.name), falling back to
-# ~/.claude/projects/<slug>/$CLAUDE_CODE_SESSION_ID/custom-title.json.
+# The session's task is the last single task named with on, pause, resume or
+# off in that session, kept in ~/.claude/timer/sessions/<session id>. The id
+# comes from TIMER_SESSION_ID or CLAUDE_CODE_SESSION_ID; no file of Claude
+# Code's own is read.
 
 set -uo pipefail
 
@@ -53,8 +54,10 @@ project_slug() {
 
 PROJECT="$(project_slug)"
 LOG="$LOGDIR/$PROJECT.tsv"
-mkdir -p "$LOGDIR"
-touch "$LOG"
+if ! mkdir -p "$LOGDIR" 2>/dev/null || ! touch "$LOG" 2>/dev/null; then
+    echo "timer: cannot write $LOG" >&2
+    exit 1
+fi
 
 now() { date +%s; }
 stamp() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -115,7 +118,13 @@ split_tasks() {
     echo "$*" | tr ',' ' ' | tr -s ' ' '\n' | awk 'NF && !seen[$0]++'
 }
 
-emit() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$(now)" "$(stamp)" >> "$LOG"; }
+# Append one event; a failed write ends the script before any success is printed.
+emit() {
+    if ! printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$(now)" "$(stamp)" 2>/dev/null >> "$LOG"; then
+        echo "timer: cannot write $LOG" >&2
+        exit 1
+    fi
+}
 
 # Current state of one task: RUNNING | PAUSED | STOPPED | NONE
 state_of() {
@@ -141,48 +150,39 @@ all_known_tasks() { awk -F'\t' 'NF{print $1}' "$LOG" | awk '!seen[$0]++'; }
 
 last_task() { awk -F'\t' 'NF{t=$1} END{if(t!="") print t}' "$LOG"; }
 
-# A top-level string field of a JSON file: jq when installed, else a plain
-# match (enough for the flat files Claude Code writes; escapes are not decoded).
-json_str() {
-    if command -v jq >/dev/null 2>&1; then
-        jq -r --arg k "$2" '.[$k] // empty' "$1" 2>/dev/null
-    else
-        sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -1
-    fi
-}
+# This session's task: the last single task named with on, pause, resume or
+# off in this session and project. Kept by this script in
+# $ROOT/sessions/<session id> as "project<TAB>task" lines, the last for a
+# project winning. Files untouched for 30 days are removed.
+SESSION_ID="${TIMER_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+SESSION_FILE=""
+case "$SESSION_ID" in
+    ""|*[!A-Za-z0-9_-]*) ;;
+    *) SESSION_FILE="$ROOT/sessions/$SESSION_ID" ;;
+esac
 
-# Name of the Claude Code session this shell runs in (empty outside a session).
-# A name Claude generated (nameSource "derived") counts as no name: it never
-# points at a task.
-session_name() {
-    if [ -n "${TIMER_SESSION_NAME:-}" ]; then printf '%s' "$TIMER_SESSION_NAME"; return; fi
-    local f name=""
-    f="$HOME/.claude/sessions/${CLAUDE_PID:-}.json"
-    if [ -n "${CLAUDE_PID:-}" ] && [ -r "$f" ] && [ "$(json_str "$f" nameSource)" != derived ]; then
-        name=$(json_str "$f" name)
-    fi
-    if [ -z "$name" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
-        f=$(find "$HOME/.claude/projects" -maxdepth 3 -path "*/$CLAUDE_CODE_SESSION_ID/custom-title.json" 2>/dev/null | head -1)
-        [ -n "$f" ] && name=$(json_str "$f" customTitle)
-    fi
-    printf '%s' "$name"
-}
-
-# Task the session name points at: the name itself when it is a known task,
-# else the first ticket key (ABC-123) in it, else the name. Empty when unnamed.
 session_task() {
-    local name key
-    name=$(session_name)
-    [ -z "$name" ] && return
-    if [ "$(state_of "$name")" != "NONE" ]; then printf '%s' "$name"; return; fi
-    key=$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]' | grep -oE '\b[A-Z][A-Z0-9]+-[0-9]+\b' | head -1)
-    printf '%s' "${key:-$name}"
+    [ -n "$SESSION_FILE" ] && [ -r "$SESSION_FILE" ] || return 0
+    awk -F'\t' -v p="$PROJECT" '$1==p { t=$2 } END { if (t!="") print t }' "$SESSION_FILE"
+}
+
+# bind_session LIST: remember LIST as this session's task when it is one task.
+bind_session() {
+    local t
+    [ -n "$SESSION_FILE" ] || return 0
+    t=$(printf '%s\n' "$1" | awk 'NF')
+    [ -n "$t" ] && [ "$(printf '%s\n' "$t" | wc -l | tr -d ' ')" = 1 ] || return 0
+    [ "$(session_task)" = "$t" ] && return 0
+    mkdir -p "$ROOT/sessions" 2>/dev/null &&
+        printf '%s\t%s\n' "$PROJECT" "$t" 2>/dev/null >> "$SESSION_FILE"
+    find "$ROOT/sessions" -type f -mtime +30 -exec rm -f {} + 2>/dev/null
+    return 0
 }
 
 # Which tasks a verb acts on when none were named. Precedence: the session's
-# task when its state is one of OK (or, with NEWKEY=1, when it is a ticket key
-# with no timer yet); otherwise the caller must ask, so the candidates are
-# printed with a LABEL and the exit code says what happened:
+# task when its state is one of OK (or, with NEWKEY=1, when it has no timer
+# yet); otherwise the caller must ask, so the candidates are printed with a
+# LABEL and the exit code says what happened:
 #   0  one task chosen (printed)     2  ask: candidates printed     3  no candidate
 #   choose_for VERB PAST "OK STATES" CANDIDATES LABEL [NEWKEY]   (VERB is for messages; the hint uses $CMD)
 choose_for() {
@@ -191,17 +191,14 @@ choose_for() {
     if [ -n "$sess" ]; then
         st=$(state_of "$sess")
         case " $ok " in *" $st "*) echo "$sess"; return 0 ;; esac
-        if [ "$newkey" = 1 ] && [ "$st" = NONE ] && printf '%s' "$sess" | grep -qE '^[A-Z][A-Z0-9]+-[0-9]+$'; then
+        if [ "$newkey" = 1 ] && [ "$st" = NONE ]; then
             echo "$sess"; return 0
         fi
     fi
     if [ -z "$sess" ]; then
-        echo "No task given and this session has no name."
+        echo "No task given, and this session has not named one yet."
     else
-        case "$st" in
-            NONE) echo "No task given. Session '$(session_name)': $sess has no timer in this project." ;;
-            *)    echo "No task given. Session '$(session_name)': $sess is $st, so it cannot be $past." ;;
-        esac
+        echo "No task given. This session's task $sess is $st, so it cannot be $past."
     fi
     if [ -z "$cand" ]; then echo "Nothing to $verb."; return 3; fi
     echo "$label: $(printf '%s\n' "$cand" | paste -sd, - | sed 's/,/, /g')"
@@ -355,8 +352,20 @@ day_split() {
 
 hm() { fmt_epoch "$1" '%H:%M'; }
 
+# FILES: this project's log, or with ALL=1 every project's, as an array so
+# paths with spaces stay whole.
+log_files() {
+    local f
+    FILES=()
+    if [ "$1" = "1" ]; then
+        for f in "$LOGDIR"/*.tsv; do [ -f "$f" ] && FILES+=("$f"); done
+    else
+        FILES=("$LOG")
+    fi
+}
+
 cmd_day() {
-    local want_split=0 want_all=0 want_tsv=0 when="" a files ivs tots
+    local want_split=0 want_all=0 want_tsv=0 when="" a ivs tots
     for a in "$@"; do
         case "$a" in
             --split) want_split=1 ;;
@@ -367,19 +376,20 @@ cmd_day() {
     done
     day_bounds "${when:-today}" || { echo "Cannot understand date '$when'." >&2; exit 1; }
 
-    if [ "$want_all" = "1" ]; then
-        files=$(ls "$LOGDIR"/*.tsv 2>/dev/null)
-    else
-        files="$LOG"
-    fi
-    [ -z "$files" ] && { echo "No timer logs found."; exit 0; }
-    # shellcheck disable=SC2086
-    ivs=$(day_intervals $files)
+    log_files "$want_all"
+    [ "${#FILES[@]}" -eq 0 ] && { echo "No timer logs found."; exit 0; }
+    ivs=$(day_intervals "${FILES[@]}")
     tots=$(printf '%s\n' "$ivs" | awk 'NF' | day_totals)
 
     if [ "$want_tsv" = "1" ]; then
-        # project, task, seconds, rounded, first_epoch, last_epoch, state
+        # project, task, seconds, rounded, first_epoch, last_epoch, state;
+        # with --split, seconds are the task's share of overlapping time.
+        local spl=""
+        [ "$want_split" = "1" ] && spl=$(printf '%s\n' "$ivs" | awk 'NF' | day_split)
         printf '%s\n' "$tots" | awk 'NF' | while IFS=$'\t' read -r p t s f l o; do
+            if [ -n "$spl" ]; then
+                s=$(printf '%s\n' "$spl" | awk -F'\t' -v p="$p" -v t="$t" '$1==p && $2==t { print $3; exit }')
+            fi
             st=$(state_of "$t" "$LOGDIR/$p.tsv")
             printf '%s\t%s\t%d\t%d\t%d\t%d\t%s\n' "$p" "$t" "$s" "$(roundup "$s")" "$f" "$l" "$st"
         done
@@ -492,7 +502,7 @@ month_rows() {
 }
 
 cmd_month() {
-    local want_split=0 want_all=0 want_tsv=0 when="" a files rows
+    local want_split=0 want_all=0 want_tsv=0 when="" a rows
     for a in "$@"; do
         case "$a" in
             --split) want_split=1 ;;
@@ -503,14 +513,9 @@ cmd_month() {
     done
     month_bounds "$when" || { echo "Cannot understand month '$when' (use MM-YYYY, e.g. 09-2026)." >&2; exit 1; }
 
-    if [ "$want_all" = "1" ]; then
-        files=$(ls "$LOGDIR"/*.tsv 2>/dev/null)
-    else
-        files="$LOG"
-    fi
-    [ -z "$files" ] && { echo "No timer logs found."; exit 0; }
-    # shellcheck disable=SC2086
-    rows=$(month_rows "$want_split" $files)
+    log_files "$want_all"
+    [ "${#FILES[@]}" -eq 0 ] && { echo "No timer logs found."; exit 0; }
+    rows=$(month_rows "$want_split" "${FILES[@]}")
 
     if [ "$want_tsv" = "1" ]; then
         # date, project, task, seconds, rounded, state
@@ -609,7 +614,7 @@ case "$CMD" in
             --all) list=$(tasks_in_state PAUSED)
                    [ -z "$list" ] && list=$(last_task)
                    require_tasks "$list" "on" ;;
-            *)     list=$(split_tasks "${ARGS//--all/}") ;;
+            *)     list=$(split_tasks "${ARGS//--all/}"); bind_session "$list" ;;
         esac
         while IFS= read -r t; do
             [ -z "$t" ] && continue
@@ -629,7 +634,7 @@ case "$CMD" in
                    list=$LIST ;;
             --all) list=$(tasks_in_state "$want")
                    if [ -z "$list" ]; then echo "Nothing to $([ "$want" = RUNNING ] && echo pause || echo resume)."; exit 0; fi ;;
-            *)     list=$(split_tasks "${ARGS//--all/}") ;;
+            *)     list=$(split_tasks "${ARGS//--all/}"); bind_session "$list" ;;
         esac
         while IFS= read -r t; do
             [ -z "$t" ] && continue
@@ -647,7 +652,7 @@ case "$CMD" in
             "")    choose_or_exit stop stopped "RUNNING PAUSED" "$(open_tasks)" Open; list=$LIST ;;
             --all) list=$(open_tasks)
                    if [ -z "$list" ]; then echo "Nothing to stop."; exit 0; fi ;;
-            *)     list=$(split_tasks "${ARGS//--all/}") ;;
+            *)     list=$(split_tasks "${ARGS//--all/}"); bind_session "$list" ;;
         esac
         while IFS= read -r t; do
             [ -z "$t" ] && continue
@@ -720,8 +725,8 @@ case "$CMD" in
         all_known_tasks
         ;;
 
-    session-name)
-        session_name; echo
+    session-task)
+        session_task
         ;;
 
     cancel)
@@ -738,7 +743,7 @@ case "$CMD" in
 
     *)
         echo "Unknown command: $CMD" >&2
-        sed -n '2,24p' "$0" >&2
+        sed -n '2,26p' "$0" >&2
         exit 1
         ;;
 esac

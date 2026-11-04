@@ -3,17 +3,17 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Footer, TimerState } from '../types'
 
-// Shows "SESSION | PROJECT · ▶ TASK 1h 05m" at the right of the prompt footer.
-// Reads the same log as bin/timer.sh, resolved the same way:
+// Shows "PROJECT · ▶ TASK 1h 05m" at the right of the prompt footer.
+// Reads the same files as bin/timer.sh, resolved the same way:
 // project = basename of the git top level (or TIMER_PROJECT), task = the
-// session name when it is a known task, else the first ticket key in it.
+// session's task, which timer.sh keeps in <TIMER_HOME>/sessions/<session id>.
+// No file of Claude Code's own is read.
 
-const footer = atom({ plugin: 'timer', key: 'footer' } as const, null, {
-  shape: 'footer-1',
+const footer = atom({ plugin: 'worklog-timer', key: 'footer' } as const, null, {
+  shape: 'footer-2',
 })
 
 const REFRESH_MS = 30_000
-const TICKET = /\b[A-Z][A-Z0-9]+-[0-9]+\b/
 
 type Totals = Map<string, { seconds: number; state: TimerState }>
 
@@ -52,28 +52,27 @@ export function totals(log: string, nowSec: number): Totals {
   return out
 }
 
-// Same as timer.sh's session_task().
-export function sessionTask(name: string, known: Totals): string | null {
-  if (!name) return null
-  if (known.has(name)) return name
-  return name.toUpperCase().match(TICKET)?.[0] ?? name
+// Same as timer.sh's session_task(): the last "project<TAB>task" line of the
+// session file for this project.
+export function boundTask(sessionFile: string, project: string): string | null {
+  let task: string | null = null
+  for (const line of sessionFile.split('\n')) {
+    const [p, t] = line.split('\t')
+    if (p === project && t) task = t
+  }
+  return task
 }
 
-export function pick(
-  session: string,
-  project: string,
-  all: Totals,
-  isUserName = true,
-): Footer {
+// Session ids timer.sh accepts as a file name.
+export const isSafeId = (id: string): boolean => /^[A-Za-z0-9_-]+$/.test(id)
+
+export function pick(bound: string | null, project: string, all: Totals): Footer {
   const running = [...all].filter(([, r]) => r.state === 'RUNNING').map(([t]) => t)
-  const own = isUserName ? sessionTask(session, all) : null
-  const ownRow = own ? all.get(own) : undefined
   // The session's own task wins whenever it has a timer; otherwise show
   // what is running in this project, so a forgotten timer is still visible.
-  const task = ownRow ? own : (running[0] ?? null)
+  const task = bound && all.has(bound) ? bound : (running[0] ?? null)
   const row = task ? all.get(task) : undefined
   return {
-    session,
     project,
     task,
     state: row?.state ?? 'NONE',
@@ -111,10 +110,14 @@ export function slugOf(top: string): string {
   return base.replace(/[^A-Za-z0-9._-]/g, '-')
 }
 
-// HOME, or USERPROFILE on Windows where HOME is usually unset. Git Bash
-// sets its HOME from USERPROFILE too, so timer.sh writes the same folder.
-async function homeDir($: EngineInterface): Promise<string> {
-  return (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
+// TIMER_HOME, else ~/.claude/timer. HOME, or USERPROFILE on Windows where
+// HOME is usually unset; Git Bash sets its HOME from USERPROFILE too, so
+// timer.sh writes the same folder.
+async function timerHome($: EngineInterface): Promise<string> {
+  const set = await $.env.get('TIMER_HOME')
+  if (set) return set
+  const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
+  return `${home}/.claude/timer`
 }
 
 export const isWindowsPath = (p: string): boolean => /^[A-Za-z]:[\\/]|^\\\\/.test(p)
@@ -150,43 +153,8 @@ async function findGitBash($: EngineInterface): Promise<string | null> {
   return null
 }
 
-// The session's name, from ~/.claude/sessions/<pid>.json (the file whose
-// sessionId is ours), as timer.sh reads it. `isUser` is false for a name
-// Claude generated (nameSource "derived"), which never points at a task.
-type SessionName = { name: string; isUser: boolean }
-const UNNAMED: SessionName = { name: '', isUser: false }
-let sessionFile: string | null = null
-async function sessionName($: EngineInterface, home: string): Promise<SessionName> {
-  const id = await $.session.id()
-  const readName = async (path: string): Promise<SessionName | null> => {
-    try {
-      const j = JSON.parse(await $.fs.read(path)) as {
-        sessionId?: string
-        name?: string
-        nameSource?: string
-      }
-      if (j.sessionId !== id) return null
-      return { name: j.name ?? '', isUser: j.nameSource !== 'derived' }
-    } catch {
-      return null
-    }
-  }
-  if (sessionFile) {
-    const name = await readName(sessionFile)
-    if (name !== null) return name
-    sessionFile = null
-  }
-  const dir = `${home}/.claude/sessions`
-  for (const entry of await $.fs.list(dir)) {
-    if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
-    const path = `${dir}/${entry.name}`
-    const name = await readName(path)
-    if (name !== null) {
-      sessionFile = path
-      return name
-    }
-  }
-  return UNNAMED
+async function readIfExists($: EngineInterface, path: string): Promise<string> {
+  return (await $.fs.exists(path)) ? await $.fs.read(path) : ''
 }
 
 let busy = false
@@ -194,17 +162,15 @@ async function refresh($: EngineInterface): Promise<void> {
   if (busy) return
   busy = true
   try {
-    const home = await homeDir($)
-    const root = (await $.env.get('TIMER_HOME')) ?? `${home}/.claude/timer`
-    const cwd = await $.session.cwd()
-    const [project, session] = await Promise.all([
-      projectSlug($, cwd),
-      sessionName($, home),
+    const root = await timerHome($)
+    const [project, id] = await Promise.all([
+      projectSlug($, await $.session.cwd()),
+      $.session.id(),
     ])
-    const logPath = `${root}/logs/${project}.tsv`
-    const log = (await $.fs.exists(logPath)) ? await $.fs.read(logPath) : ''
+    const log = await readIfExists($, `${root}/logs/${project}.tsv`)
+    const binding = isSafeId(id) ? await readIfExists($, `${root}/sessions/${id}`) : ''
     const now = Math.floor((await $.clock.now()) / 1000)
-    const next = pick(session.name, project, totals(log, now), session.isUser)
+    const next = pick(boundTask(binding, project), project, totals(log, now))
     await update($, footer, () => next)
   } catch (err) {
     $.ui.log(`timer: refresh failed: ${String(err)}`, { to: 'debug' })
@@ -241,12 +207,33 @@ export function asBlock(out: string): string {
   return out.includes('\n') ? '\n```\n' + out + '\n```' : out
 }
 
+// The tasks timer.sh listed when it could not pick one (exit 2), from its
+// "Paused: A, B" (or Last task, Running, Open) line.
+export function candidates(out: string): string[] {
+  const m = out.match(/^(?:Paused|Last task|Running|Open): (.+)$/m)
+  return m?.[1] ? m[1].split(',').map(t => t.trim()).filter(Boolean) : []
+}
+
+// The question for the person: up to four options, "All" (the --all form)
+// when there are two or more tasks, "Cancel" beside a single one. A task
+// past the first three is typed under the dialog's Other.
+export function question(verb: string, tasks: string[]): { text: string; options: string[] } {
+  const options = tasks.length >= 2 ? [...tasks.slice(0, 3), 'All'] : [...tasks, 'Cancel']
+  return { text: `Which task for /timer ${verb}?`, options }
+}
+
+// timer.sh arguments for the answer, or null when nothing should run.
+export function answerArgv(verb: string, answer: string): string[] | null {
+  const a = answer.trim()
+  if (!a || a === 'Cancel') return null
+  if (a === 'All') return [verb, '--all']
+  return [verb, ...timerArgv(a)]
+}
+
 async function runTimer(
   $: EngineInterface,
   argv: string[],
 ): Promise<{ code: number; out: string }> {
-  const home = await homeDir($)
-  const session = await sessionName($, home).catch(() => UNNAMED)
   const script = `${$.plugin.root}/bin/timer.sh`
   let cmd = [script]
   if (isWindowsPath($.plugin.root)) {
@@ -261,9 +248,8 @@ async function runTimer(
   }
   const r = await $.process.run([...cmd, ...argv], {
     cwd: await $.session.cwd(),
-    // The script finds the session name from CLAUDE_PID, which a mod's child
-    // may not have; hand it the name the footer already resolved.
-    env: session.isUser && session.name ? { TIMER_SESSION_NAME: session.name } : {},
+    // The session id names the file where timer.sh keeps the session's task.
+    env: { TIMER_SESSION_ID: await $.session.id() },
     timeoutMs: 30_000,
   })
   const out = [r.stdout, r.stderr].map(s => s.trimEnd()).filter(Boolean).join('\n')
@@ -290,51 +276,45 @@ export const register: Register = on => {
     return started
   })
 
-  // Runs timer.sh at once, with no model turn. Only when the script cannot
-  // pick a task (exit 2) is Claude asked to put the question to the person.
+  // Runs timer.sh at once, with no model turn. When the script cannot pick a
+  // task (exit 2), the person is asked which one, and the answer runs.
   on('command.run', { command: 'timer' }, async ($, e) => {
-    const argv = timerArgv(e.args)
-    const shown = `/timer ${argv.join(' ')}`.trimEnd()
-    let res: { code: number; out: string }
-    try {
-      res = await runTimer($, argv)
-    } catch (err) {
-      return { text: `timer.sh failed: ${String(err)}` }
-    }
+    let argv = timerArgv(e.args)
+    let res = await runTimer($, argv)
     void refresh($)
-    const out = res.out || '(no output)'
     if (res.code === 2) {
       const verb = argv[0] ?? 'status'
-      const text =
-        `I ran \`${shown}\`, but it could not pick a task. timer.sh printed:\n\n${out}\n\n` +
-        'Ask me which task to act on with AskUserQuestion: one option per listed ' +
-        'task, plus "All" (the --all form) when there are two or more. Then run ' +
-        `\`timer.sh ${verb} <choice>\` and report its output plainly.`
-      // A prompt submitted from inside this run would wait on the run itself;
-      // send it once the command has finished.
-      $.clock.after(50, () => void $.prompt.submit({ text }))
-      return { text: asBlock(out) }
+      const tasks = candidates(res.out)
+      if (tasks.length === 0) return { text: asBlock(res.out) }
+      const q = question(verb, tasks)
+      let answer: string
+      try {
+        answer = await $.ui.ask(q.text, { options: q.options, header: 'Timer' })
+      } catch {
+        // Dismissed: show what the script said and change nothing.
+        return { text: asBlock(res.out) }
+      }
+      const again = answerArgv(verb, answer)
+      if (!again) return { text: 'Nothing changed.' }
+      argv = again
+      res = await runTimer($, argv)
+      void refresh($)
     }
-    return { text: asBlock(out), context: [`${shown} printed:\n${out}`] }
+    const out = res.out || '(no output)'
+    return { text: asBlock(out), context: [`/timer ${argv.join(' ')} printed:\n${out}`] }
   }).catch(($, e, next) => next(e))
 
-  // Pick up /timer on|pause|off at once instead of on the next tick.
+  // Pick up timer.sh runs from Claude's Bash tool at once, not on the next tick.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
     if (e.command.includes('timer.sh')) void refresh($)
     return ran
   }).catch(($, e, next) => next(e))
 
-  on('prompt.submit', ($, e, next) => {
-    void refresh($)
-    return next(e)
-  }).catch(($, e, next) => next(e))
-
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const f = await read($, footer)
     if (!f) return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const session = f.session ? f.session.slice(0, 40) : 'unnamed'
     const timer = f.task
       ? `${ICON[f.state]} ${f.task} ${fmt(f.seconds)}`
       : `${ICON.NONE} no timer`
@@ -343,9 +323,7 @@ export const register: Register = on => {
         {e.props.modes.length > 0 && (
           <Text dimColor>{e.props.modes.join(' & ')} · </Text>
         )}
-        <Text dimColor>
-          {session} | {f.project} ·{' '}
-        </Text>
+        <Text dimColor>{f.project} · </Text>
         <Text color={COLOR[f.state]}>{timer}</Text>
         {f.othersRunning > 0 && (
           <Text color="warning"> +{f.othersRunning} running</Text>

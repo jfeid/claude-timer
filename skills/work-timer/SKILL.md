@@ -71,25 +71,29 @@ Examples:
    the chosen task list (or `--all`) and report that output. Never pick for
    the user, and never act on every task without that answer.
 
+5. Never look for the session's name or task in Claude Code's own files
+   (`~/.claude/sessions/`, `~/.claude/projects/` or transcripts). When the
+   task is unclear, ask the user.
+
 ## on / pause / resume / off without a task
 
 Precedence when no task is named:
 
-1. The session name (`/rename ABC-123`). The script takes the name itself
-   when it is a known task, else the first ticket key in it. When that task is
-   in a state the verb can act on, it is the only one acted on, even when
+1. The session's task: the last single task named with `on`, `pause`,
+   `resume` or `off` in this session (`timer.sh session-task` prints it). The
+   script keeps it in its own folder, keyed by the session id. When that task
+   is in a state the verb can act on, it is the only one acted on, even when
    other tasks are open:
 
    | Verb | Acts on the session task when it is |
    |---|---|
-   | `on` | paused (resumes), stopped (restarts), or a ticket key with no timer yet (starts) |
+   | `on` | paused (resumes) or stopped (restarts) |
    | `pause` | running |
    | `resume` | paused |
    | `off` | running or paused |
 
-2. Otherwise the script prints why the session did not match (no name, no key,
-   no timer for that key, or the wrong state) and the tasks that could be
-   acted on, and exits 2. Ask which one, as in step 4 above. Candidates are
+2. Otherwise the script prints why the session did not match (no task named
+   yet, or the wrong state) and the tasks that could be acted on, and exits 2. Ask which one, as in step 4 above. Candidates are
    the running tasks for `pause`, the paused ones for `resume`, both for
    `off`, and for `on` the paused tasks or, failing that, the last task used.
 3. `--all` skips the question and acts on every candidate, which is what the
@@ -173,8 +177,7 @@ scripts consume.
 - `timer.sh day DATE --tsv` - machine-readable day rows
 - `timer.sh month MM-YYYY --tsv` - machine-readable month rows
 - `timer.sh tasks` - list known task names for this project
-- `timer.sh session-name` - the session name the script sees
-  (`TIMER_SESSION_NAME=<name>` overrides it, for tests)
+- `timer.sh session-task` - the task this session last named
 - `timer.sh where` - print the log file path
 - `timer.sh cancel <task>` - erase a task's entries entirely
 

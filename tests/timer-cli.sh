@@ -6,7 +6,8 @@ set -u
 
 T="$(cd "$(dirname "$0")/.." && pwd)/bin/timer.sh"
 TIMER_HOME=$(mktemp -d)
-export TIMER_HOME TIMER_PROJECT=ci TIMER_SESSION_NAME=ci-session TZ=UTC
+export TIMER_HOME TIMER_PROJECT=ci TIMER_SESSION_ID=ci-session TZ=UTC
+unset CLAUDE_CODE_SESSION_ID
 trap 'rm -rf "$TIMER_HOME"' EXIT
 
 fails=0
@@ -43,7 +44,10 @@ run "pause" 0 pause ABC-1;                 has "ABC-1 paused"
 run "resume" 0 resume ABC-1
 run "off" 0 off ABC-1;                     has "ABC-1 stopped"
 run "on two tasks" 0 on ABC-1,ABC-2
-run "off without a task asks" 2 off;       has "Open: ABC-1, ABC-2"
+run "off acts on the session's task" 0 off; has "ABC-1 stopped"
+run "on ABC-1 again" 0 on ABC-1
+TIMER_SESSION_ID=other run "another session asks" 2 off
+has "this session has not named one yet"; has "Open: ABC-1, ABC-2"
 run "off --all" 0 off --all;               has "ABC-2 stopped"
 run "report" 0 report;                     has "TOTAL"
 run "tasks" 0 tasks;                       has "ABC-2"
@@ -52,6 +56,33 @@ run "day today" 0 day
 run "day yesterday" 0 day yesterday
 run "month current" 0 month
 run "month last" 0 month last
+
+echo "== session task"
+TIMER_SESSION_ID=s-2 run "no task named yet" 0 session-task
+[ -z "$out" ] && echo "ok     empty" || { echo "FAIL   expected empty, got: $out"; fails=$((fails + 1)); }
+TIMER_SESSION_ID=s-2 run "on XYZ-1 names it" 0 on XYZ-1
+TIMER_SESSION_ID=s-2 run "session-task" 0 session-task; has "XYZ-1"
+TIMER_SESSION_ID=s-2 run "pause uses it" 0 pause;        has "XYZ-1 paused"
+TIMER_SESSION_ID=s-2 run "on resumes it" 0 on;           has "XYZ-1 resumed"
+TIMER_SESSION_ID=s-2 run "two tasks keep it" 0 on XYZ-2,XYZ-3
+TIMER_SESSION_ID=s-2 run "still XYZ-1" 0 session-task;   has "XYZ-1"
+TIMER_SESSION_ID=s-2 run "off uses it" 0 off;            has "XYZ-1 stopped"
+TIMER_SESSION_ID=s-2 run "on restarts it" 0 on;          has "XYZ-1 started"
+CLAUDE_CODE_SESSION_ID=s-2 TIMER_SESSION_ID= run "id from Claude's Bash tool" 0 session-task; has "XYZ-1"
+TIMER_SESSION_ID=../x run "unsafe id is ignored" 0 session-task
+[ ! -e "$TIMER_HOME/x" ] && echo "ok     no file outside sessions/" || { echo "FAIL   wrote outside sessions/"; fails=$((fails + 1)); }
+run "off --all" 0 off --all
+
+echo "== failed writes"
+# Windows ignores chmod, so a read-only folder cannot be made there.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) echo "skip   read-only folder (Windows)" ;;
+    *)
+        RO=$(mktemp -d); chmod 500 "$RO"
+        TIMER_HOME="$RO" run "unwritable log fails" 1 on ABC-9; has "cannot write"
+        printf '%s\n' "$out" | grep -q started && { echo "FAIL   printed started"; fails=$((fails + 1)); } || echo "ok     no 'started'"
+        chmod 700 "$RO"; rm -rf "$RO" ;;
+esac
 
 echo "== fixed history (2026-01-15, UTC)"
 # OLD-1 09:00-10:00 and 10:10-10:30, OLD-2 09:30-09:45 (overlapping).
@@ -74,22 +105,24 @@ has "Billable: 1h 30m = 1.50 hours over 1 day(s)"
 run "report --split" 0 report --split
 has "OLD-1                  1h 12m     1h 15m"
 
-echo "== session name"
-mkdir -p "$TIMER_HOME/.claude/sessions"
-printf '{"pid":4242,"sessionId":"s-1","name":"ABC-7 login fix","cwd":"/x"}\n' \
-    > "$TIMER_HOME/.claude/sessions/4242.json"
-HOME="$TIMER_HOME" CLAUDE_PID=4242 TIMER_SESSION_NAME="" run "session-name from the session file" 0 session-name
-has "ABC-7 login fix"
-# The same field read without jq: `command -v jq` answers "not found".
-out=$("$BASH" -c 'command() { [ "$1 $2" = "-v jq" ] && return 1; builtin command "$@"; }
-    '"$(sed -n '/^json_str()/,/^}/p' "$T")"'
-    json_str "$1" name' _ "$TIMER_HOME/.claude/sessions/4242.json" 2>&1)
-has "ABC-7 login fix"
-# A name Claude generated is not a task name.
-printf '{"pid":4243,"sessionId":"s-2","name":"johnf-45","nameSource":"derived"}\n' \
-    > "$TIMER_HOME/.claude/sessions/4243.json"
-HOME="$TIMER_HOME" CLAUDE_PID=4243 TIMER_SESSION_NAME="" run "generated session name is ignored" 0 session-name
-[ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ] && echo "ok     empty" || { echo "FAIL   expected empty, got: $out"; fails=$((fails + 1)); }
+# Two tasks overlapping for a whole hour: --split gives each half of it.
+printf '%s\t%s\t%s\t-\n' \
+    SPL-1 START 1768550400 SPL-1 STOP 1768554000 \
+    SPL-2 START 1768550400 SPL-2 STOP 1768554000 \
+    > "$TIMER_HOME/logs/split.tsv"
+TIMER_PROJECT=split run "day --split --tsv" 0 day 2026-01-16 --split --tsv
+has "split	SPL-1	1800	1800"
+TIMER_PROJECT=split run "day --tsv, unsplit" 0 day 2026-01-16 --tsv
+has "split	SPL-1	3600	3600"
+
+echo "== paths with spaces"
+SP="$TIMER_HOME/with space"
+mkdir -p "$SP/logs"; cp "$TIMER_HOME/logs/ci.tsv" "$SP/logs/ci.tsv"
+TIMER_HOME="$SP" run "day --tsv" 0 day 2026-01-15 --tsv
+has "ci	OLD-1	4800	5400"
+TIMER_HOME="$SP" run "month --all" 0 month 01-2026 --all
+has "Billable: 1h 45m"
+TIMER_HOME="$SP" run "on with a space in the path" 0 on SP-1; has "SP-1 started"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all checks passed"; else echo "$fails check(s) failed"; exit 1; fi

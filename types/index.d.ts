@@ -1,7 +1,6 @@
 export type TimerState = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'NONE'
 
 export type Footer = {
-  session: string
   project: string
   // Task shown in the footer, null when nothing is open in this project.
   task: string | null
@@ -13,6 +12,6 @@ export type Footer = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'timer': { footer: Shaped<Footer | null> }
+    'worklog-timer': { footer: Shaped<Footer | null> }
   }
 }

@@ -7,7 +7,7 @@
   },
   "plugins": [
     {
-      "name": "timer",
+      "name": "worklog-timer",
       "source": "./",
       "description": "Per-task work timers with billable reports and the running timer in the prompt footer"
     }

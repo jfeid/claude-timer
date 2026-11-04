@@ -2,12 +2,16 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import {
+  answerArgv,
   asBlock,
   bashFromExecPath,
+  boundTask,
+  candidates,
   fmt,
+  isSafeId,
   isWindowsPath,
   pick,
-  sessionTask,
+  question,
   slugOf,
   timerArgv,
   totals,
@@ -36,35 +40,34 @@ describe('log parsing', () => {
     expect(all.get('OLD-1')).toEqual({ seconds: 60, state: 'STOPPED' })
   })
 
-  test('session name resolves to a task', async () => {
-    const all = totals(LOG, NOW)
-    expect(sessionTask('ABC-556', all)).toBe('ABC-556')
-    expect(sessionTask('fix abc-556 login', all)).toBe('ABC-556')
-    expect(sessionTask('', all)).toBe(null)
+  test("the session file's last line for the project wins", async () => {
+    const file = 'proj\tABC-1\nother\tZZZ-1\nproj\tABC-2\n'
+    expect(boundTask(file, 'proj')).toBe('ABC-2')
+    expect(boundTask(file, 'other')).toBe('ZZZ-1')
+    expect(boundTask(file, 'none')).toBe(null)
+    expect(boundTask('', 'proj')).toBe(null)
+  })
+
+  test('session ids are file names only', async () => {
+    expect(isSafeId('5f3c2a10-1b2c-4d5e-8f90-123456789abc')).toBe(true)
+    expect(isSafeId('../x')).toBe(false)
+    expect(isSafeId('')).toBe(false)
   })
 
   test('the session task wins, others are counted', async () => {
-    const f = pick('ABC-556 login', 'proj', totals(LOG, NOW))
+    const f = pick('ABC-556', 'proj', totals(LOG, NOW))
     expect(f.task).toBe('ABC-556')
     expect(f.othersRunning).toBe(1)
-  })
-
-  test('a generated session name is not read as a task', async () => {
-    // As a user's name, xyz-9 would pick XYZ-9; generated, the first running shows.
-    const f = pick('xyz-9', 'proj', totals(LOG, NOW), false)
-    expect(f.session).toBe('xyz-9')
-    expect(f.task).toBe('ABC-556')
-    expect(pick('xyz-9', 'proj', totals(LOG, NOW)).task).toBe('XYZ-9')
+    expect(pick('OLD-1', 'proj', totals(LOG, NOW)).task).toBe('OLD-1')
   })
 
   test('without a session task, a running one shows', async () => {
-    const f = pick('timer-status-ui', 'proj', totals(LOG, NOW))
-    expect(f.task).toBe('ABC-556')
-    expect(f.state).toBe('RUNNING')
+    expect(pick(null, 'proj', totals(LOG, NOW)).task).toBe('ABC-556')
+    expect(pick('NEW-1', 'proj', totals(LOG, NOW)).task).toBe('ABC-556')
   })
 
   test('nothing open', async () => {
-    const f = pick('x', 'proj', totals('', NOW))
+    const f = pick(null, 'proj', totals('', NOW))
     expect(f.task).toBe(null)
     expect(f.state).toBe('NONE')
   })
@@ -101,8 +104,33 @@ describe('log parsing', () => {
   })
 })
 
-test('the footer shows session, project and the session task', async ($, on) => {
-  const HOME = '/home/u'
+describe('the question when no task can be picked', () => {
+  const OUT = 'No task given, and this session has not named one yet.\nOpen: ABC-1, ABC-2\nAsk which to stop, then run: timer.sh off <task[,task]|--all>'
+
+  test('candidates come from the label line', async () => {
+    expect(candidates(OUT)).toEqual(['ABC-1', 'ABC-2'])
+    expect(candidates('Last task: OLD-1')).toEqual(['OLD-1'])
+    expect(candidates('Nothing to stop.')).toEqual([])
+  })
+
+  test('All for two or more, Cancel beside one, four options at most', async () => {
+    expect(question('off', ['A', 'B']).options).toEqual(['A', 'B', 'All'])
+    expect(question('on', ['A']).options).toEqual(['A', 'Cancel'])
+    expect(question('off', ['A', 'B', 'C', 'D', 'E']).options).toEqual(['A', 'B', 'C', 'All'])
+    expect(question('pause', ['A']).text).toBe('Which task for /timer pause?')
+  })
+
+  test('the answer becomes the arguments', async () => {
+    expect(answerArgv('off', 'ABC-2')).toEqual(['off', 'ABC-2'])
+    expect(answerArgv('off', 'All')).toEqual(['off', '--all'])
+    expect(answerArgv('on', 'Cancel')).toBe(null)
+    expect(answerArgv('on', ' NEW-7 ')).toEqual(['on', 'NEW-7'])
+  })
+})
+
+const HOME = '/home/u'
+
+test('the footer shows project and the session task', async ($, on) => {
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
   on('session.id', () => ({ value: 'sid-1' }))
   on('session.cwd', () => ({ value: '/work/my repo' }))
@@ -115,12 +143,9 @@ test('the footer shows session, project and the session task', async ($, on) => 
       isStderrTruncated: false,
     },
   }))
-  on('fs.list', () => ({ value: [{ name: '42.json', kind: 'file', size: 1, mtimeMs: 0, isLink: false }] }))
   on('fs.exists', () => ({ value: true }))
   on('fs.read', (_, e) => ({
-    value: e.path.endsWith('.json')
-      ? JSON.stringify({ sessionId: 'sid-1', name: 'ABC-556 login' })
-      : LOG,
+    value: e.path === `${HOME}/.claude/timer/sessions/sid-1` ? 'my-repo\tXYZ-9\n' : LOG,
   }))
   on('clock.now', () => ({ value: NOW * 1000 }))
   on('clock.every', () => ({ value: undefined }))
@@ -136,16 +161,16 @@ test('the footer shows session, project and the session task', async ($, on) => 
   await new Promise<void>(r => setTimeout(r, 50))
 
   const ui = await $.ui.mount({
-    plugin: 'timer',
+    plugin: 'worklog-timer',
     component: 'SessionMode',
     requestId: 'mode',
     surface: 'terminal',
     props: { modes: [] },
   })
-  const names = await ui.find({ type: 'Text', text: /\|/ })
-  expect(names?.text).toBe('ABC-556 login | my-repo · ')
+  const project = await ui.find({ type: 'Text', text: /·/ })
+  expect(project?.text).toBe('my-repo · ')
   const timer = await ui.find({ type: 'Text', text: /▶/ })
-  expect(timer?.text).toBe('▶ ABC-556 50m')
+  expect(timer?.text).toBe('▶ XYZ-9 30m')
   const others = await ui.find({ type: 'Text', text: /running/ })
   expect(others?.text).toBe(' +1 running')
   await ui.unmount()
@@ -158,62 +183,70 @@ const TYPED = {
 
 type Run = { argv: readonly string[]; env?: Record<string, string> }
 
-// The engine around the plugin for a /timer run: the script answers `script`.
+// The engine around the plugin for a /timer run: the script answers each run
+// from `script`, in turn.
 async function startWith(
   $: Parameters<TestBody>[0],
   on: Parameters<TestBody>[1],
-  script: { exitCode: number; stdout: string },
+  script: { exitCode: number; stdout: string }[],
   runs: Run[],
 ) {
-  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
   on('session.id', () => ({ value: 'sid-1' }))
   on('session.cwd', () => ({ value: '/work/repo' }))
   on('process.run', (_, e) => {
     const isTimer = (e.argv[0] ?? '').endsWith('/bin/timer.sh')
+    const answer = isTimer ? (script[runs.length] ?? { exitCode: 0, stdout: '' }) : null
     if (isTimer) runs.push({ argv: e.argv.slice(1), env: e.init?.env })
     return {
       value: {
-        exitCode: isTimer ? script.exitCode : 0,
-        stdout: isTimer ? script.stdout : '/work/repo\n',
+        exitCode: answer ? answer.exitCode : 0,
+        stdout: answer ? answer.stdout : '/work/repo\n',
         stderr: '',
         isStdoutTruncated: false,
         isStderrTruncated: false,
       },
     }
   })
-  on('fs.list', () => ({ value: [{ name: '42.json', kind: 'file', size: 1, mtimeMs: 0, isLink: false }] }))
   on('fs.exists', () => ({ value: false }))
-  on('fs.read', () => ({ value: JSON.stringify({ sessionId: 'sid-1', name: 'ABC-1 login' }) }))
   on('clock.now', () => ({ value: NOW * 1000 }))
   on('clock.every', () => ({ value: undefined }))
-  on('clock.after', () => ({ value: undefined }))
   on('command.register', () => ({ value: { command: 'timer' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: '/work/repo', surface: 'terminal', isInteractive: true })
 }
 
-test('/timer runs the script and prints its output', async ($, on) => {
+test('/timer runs the script with the session id', async ($, on) => {
   const runs: Run[] = []
-  await startWith($, on, { exitCode: 0, stdout: 'ABC-1 paused at 50m\n' }, runs)
+  await startWith($, on, [{ exitCode: 0, stdout: 'ABC-1 paused\n' }], runs)
 
   const r = await $.command.run({ ...TYPED, command: 'timer', args: 'pause ABC-1' })
-  expect(r.text).toBe('ABC-1 paused at 50m')
+  expect(r.text).toBe('ABC-1 paused')
   expect(runs[0]?.argv).toEqual(['pause', 'ABC-1'])
-  expect(runs[0]?.env).toEqual({ TIMER_SESSION_NAME: 'ABC-1 login' })
+  expect(runs[0]?.env).toEqual({ TIMER_SESSION_ID: 'sid-1' })
 })
 
-test('/timer hands the question to Claude when no task can be picked', async ($, on) => {
+test('/timer asks which task when the script cannot pick one', async ($, on) => {
   const runs: Run[] = []
-  let asked = ''
-  on('prompt.submit', (_, e) => {
-    asked = e.text
-    return { text: e.text }
+  let asked: { question: string; options: { label: string }[] } | undefined
+  on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
+    const q = e.questions[0]!
+    asked = { question: q.question, options: q.options }
+    return { result: { questions: e.questions, answers: { [q.question]: 'ABC-2' } } }
   })
-  await startWith($, on, { exitCode: 2, stdout: 'Running: ABC-1 ABC-2\n' }, runs)
+  await startWith(
+    $,
+    on,
+    [
+      { exitCode: 2, stdout: 'No task given, and this session has not named one yet.\nOpen: ABC-1, ABC-2\n' },
+      { exitCode: 0, stdout: 'ABC-2 stopped — 10m (600s)\n' },
+    ],
+    runs,
+  )
 
   const r = await $.command.run({ ...TYPED, command: 'timer', args: 'off' })
-  await new Promise<void>(res => setTimeout(res, 50))
-  expect(r.text).toBe('Running: ABC-1 ABC-2')
-  expect(asked).toContain('AskUserQuestion')
-  expect(asked).toContain('`timer.sh off <choice>`')
+  expect(asked?.question).toBe('Which task for /timer off?')
+  expect(asked?.options.map(o => o.label)).toEqual(['ABC-1', 'ABC-2', 'All'])
+  expect(runs.map(x => x.argv)).toEqual([['off'], ['off', 'ABC-2']])
+  expect(r.text).toBe('ABC-2 stopped — 10m (600s)')
 })
