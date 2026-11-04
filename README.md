@@ -110,6 +110,9 @@ bash (3.2 or later) and the usual shell tools. Nothing else is required:
   `brew install coreutils` on macOS) `day` takes anything `date -d` reads,
   such as `"last friday"`. With the macOS `date` it takes `today`,
   `yesterday`, `tomorrow` or `YYYY-MM-DD`.
+- Windows: Git for Windows. `/timer` runs the script with its Git Bash, found
+  through `CLAUDE_CODE_GIT_BASH_PATH` or next to `git`. Without it (PowerShell
+  only) the script, `/timer` and the skill do not work.
 
 Used daily on Linux. CI runs the script's tests on Linux, macOS and Windows
 (Git Bash); the `/timer` command and the footer are tested on Linux only so

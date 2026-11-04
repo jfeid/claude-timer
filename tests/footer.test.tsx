@@ -1,7 +1,16 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { fmt, pick, sessionTask, timerArgv, totals } from '../hooks/register'
+import {
+  bashFromExecPath,
+  fmt,
+  isWindowsPath,
+  pick,
+  sessionTask,
+  slugOf,
+  timerArgv,
+  totals,
+} from '../hooks/register'
 
 // The test environment has timers; its lib (es2023, no DOM) does not declare them.
 declare const setTimeout: (fn: () => void, ms: number) => unknown
@@ -55,6 +64,21 @@ describe('log parsing', () => {
     expect(timerArgv('')).toEqual([])
     expect(timerArgv('  on ABC-1,ABC-2 ')).toEqual(['on', 'ABC-1,ABC-2'])
     expect(timerArgv('day "last friday" --all')).toEqual(['day', 'last', 'friday', '--all'])
+  })
+
+  test('project slug from a POSIX or Windows path', async () => {
+    expect(slugOf('/work/my repo/')).toBe('my-repo')
+    expect(slugOf('C:\\Users\\u\\proj')).toBe('proj')
+    expect(slugOf('C:/Users/u/proj')).toBe('proj')
+  })
+
+  test('Git Bash next to git on Windows', async () => {
+    expect(isWindowsPath('C:\\Users\\u\\.claude')).toBe(true)
+    expect(isWindowsPath('/home/u/.claude')).toBe(false)
+    expect(bashFromExecPath('C:/Program Files/Git/mingw64/libexec/git-core\n')).toBe(
+      'C:/Program Files/Git/bin/bash.exe',
+    )
+    expect(bashFromExecPath('/usr/lib/git-core')).toBe(null)
   })
 
   test('format', async () => {

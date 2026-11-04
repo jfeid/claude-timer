@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Footer, TimerState } from '../types'
 
 // Shows "SESSION | PROJECT · ▶ TASK 1h 05m" at the right of the prompt footer.
-// Reads the same log as ~/.claude/timer/timer.sh, resolved the same way:
+// Reads the same log as bin/timer.sh, resolved the same way:
 // project = basename of the git top level (or TIMER_PROJECT), task = the
 // session name when it is a known task, else the first ticket key in it.
 
@@ -100,8 +100,52 @@ async function projectSlug($: EngineInterface, cwd: string): Promise<string> {
   } catch {
     // not a repository, or git missing: fall back to the directory
   }
-  const base = top.replace(/\/+$/, '').split('/').pop() ?? ''
+  return slugOf(top)
+}
+
+// The last path segment, `/` or `\` separated, as a log file name.
+export function slugOf(top: string): string {
+  const base = top.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
   return base.replace(/[^A-Za-z0-9._-]/g, '-')
+}
+
+// HOME, or USERPROFILE on Windows where HOME is usually unset. Git Bash
+// sets its HOME from USERPROFILE too, so timer.sh writes the same folder.
+async function homeDir($: EngineInterface): Promise<string> {
+  return (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
+}
+
+export const isWindowsPath = (p: string): boolean => /^[A-Za-z]:[\\/]|^\\\\/.test(p)
+
+// Git's install folder from `git --exec-path`
+// (<Git>/mingw64/libexec/git-core), and its bash.exe.
+export function bashFromExecPath(execPath: string): string | null {
+  const path = execPath.trim()
+  const root = path.replace(/[\\/]+(mingw64|mingw32|clangarm64|ucrt64)[\\/]+libexec[\\/]+git-core$/i, '')
+  return root && root !== path ? `${root}/bin/bash.exe` : null
+}
+
+// On Windows a .sh file does not run by itself, and `bash` on PATH is often
+// WSL's, which cannot see C:\ paths. Use Git Bash, found the way Claude
+// Code finds it: CLAUDE_CODE_GIT_BASH_PATH, then next to git.
+let gitBash: string | null = null
+async function findGitBash($: EngineInterface): Promise<string | null> {
+  if (gitBash) return gitBash
+  const candidates: string[] = []
+  const set = await $.env.get('CLAUDE_CODE_GIT_BASH_PATH')
+  if (set) candidates.push(set)
+  try {
+    const r = await $.process.run(['git', '--exec-path'], { timeoutMs: 5000 })
+    const bash = r.exitCode === 0 ? bashFromExecPath(r.stdout) : null
+    if (bash) candidates.push(bash)
+  } catch {
+    // git missing: try the default install folder
+  }
+  candidates.push('C:/Program Files/Git/bin/bash.exe')
+  for (const c of candidates) {
+    if (await $.fs.exists(c).catch(() => false)) return (gitBash = c)
+  }
+  return null
 }
 
 // The session's name, from ~/.claude/sessions/<pid>.json (the file whose
@@ -140,7 +184,7 @@ async function refresh($: EngineInterface): Promise<void> {
   if (busy) return
   busy = true
   try {
-    const home = (await $.env.get('HOME')) ?? ''
+    const home = await homeDir($)
     const root = (await $.env.get('TIMER_HOME')) ?? `${home}/.claude/timer`
     const cwd = await $.session.cwd()
     const [project, session] = await Promise.all([
@@ -182,9 +226,21 @@ async function runTimer(
   $: EngineInterface,
   argv: string[],
 ): Promise<{ code: number; out: string }> {
-  const home = (await $.env.get('HOME')) ?? ''
+  const home = await homeDir($)
   const session = await sessionName($, home).catch(() => '')
-  const r = await $.process.run([`${$.plugin.root}/bin/timer.sh`, ...argv], {
+  const script = `${$.plugin.root}/bin/timer.sh`
+  let cmd = [script]
+  if (isWindowsPath($.plugin.root)) {
+    const bash = await findGitBash($)
+    if (!bash) {
+      return {
+        code: 1,
+        out: 'timer: Git Bash not found. Install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe.',
+      }
+    }
+    cmd = [bash, script.replace(/\\/g, '/')]
+  }
+  const r = await $.process.run([...cmd, ...argv], {
     cwd: await $.session.cwd(),
     // The script finds the session name from CLAUDE_PID, which a mod's child
     // may not have; hand it the name the footer already resolved.
