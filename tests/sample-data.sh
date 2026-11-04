@@ -4,7 +4,7 @@
 #   bash tests/sample-data.sh [DIR]      (DIR defaults to a new temp folder)
 # Then, in the same shell:
 #   export TIMER_HOME=DIR TIMER_PROJECT=acme-shop
-#   bin/timer.sh status; bin/timer.sh day; bin/timer.sh month
+#   bin/timer.sh list; bin/timer.sh day; bin/timer.sh month
 # or start `claude` there to see /timer and the footer.
 set -euo pipefail
 

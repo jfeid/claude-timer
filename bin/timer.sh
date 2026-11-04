@@ -10,7 +10,11 @@
 #   timer.sh resume [task,...|--all] resume; same resolution over the paused tasks
 #   timer.sh off [task,...|--all]    stop; the session's task when running or paused, else
 #                                    exit 2 listing the open tasks (--all: every open task)
-#   timer.sh status                  one line per task with live totals
+#   timer.sh status                  this session's task: state, since when, total, today,
+#                                    and the other open tasks of the project
+#   timer.sh list [running|paused|stopped|open ...]
+#                                    one line per task with live totals, optionally only
+#                                    those states (open = running and paused)
 #   timer.sh report [--split]        table with raw + quarter-rounded totals
 #   timer.sh day [DATE] [--all] [--split] [--tsv]
 #                                    full-day report: per-task time clipped to that day,
@@ -590,6 +594,85 @@ cmd_month() {
     fi
 }
 
+# A task's last event and its epoch: EVENT<TAB>epoch.
+last_event() {
+    awk -F'\t' -v k="$1" '$1==k { e=$2; t=$3 } END { if (e!="") printf "%s\t%s\n", e, t }' "$LOG"
+}
+
+# An epoch as HH:MM when it is today, else YYYY-MM-DD HH:MM.
+when_of() {
+    if [ "$(fmt_epoch "$1" %Y-%m-%d)" = "$(date +%Y-%m-%d)" ]; then fmt_epoch "$1" %H:%M
+    else fmt_epoch "$1" '%Y-%m-%d %H:%M'; fi
+}
+
+# Running and paused tasks other than $1, as "A (RUNNING, 1h 05m), B (PAUSED, 4m)".
+open_others() {
+    local t s st out=""
+    while IFS=$'\t' read -r t s st; do
+        [ "$t" = "$1" ] && continue
+        case "$st" in RUNNING|PAUSED) out="${out:+$out, }$t ($st, $(fmt "$s"))" ;; esac
+    done < <(totals)
+    printf '%s' "$out"
+}
+
+cmd_status() {
+    local sess st secs ev ts today others
+    sess=$(session_task)
+    others=$(open_others "$sess")
+    if [ -z "$sess" ] || [ "$(state_of "$sess")" = NONE ]; then
+        if [ -z "$sess" ]; then
+            echo "This session has no task yet. Start or name one with: /timer on <task>"
+        else
+            echo "This session's task $sess has no timer in $PROJECT."
+        fi
+        if [ -n "$others" ]; then echo "Open in $PROJECT: $others"
+        else echo "Nothing open in $PROJECT."; fi
+        echo "All tasks: /timer list"
+        return
+    fi
+    st=$(state_of "$sess")
+    secs=$(totals | awk -F'\t' -v k="$sess" '$1==k { print $2 }')
+    IFS=$'\t' read -r ev ts < <(last_event "$sess")
+    day_bounds today
+    today=$(day_intervals "$LOG" | awk -F'\t' -v k="$sess" '$2==k { s+=$4-$3 } END { print s+0 }')
+    printf '%-11s %s   (project %s)\n' "Task:" "$sess" "$PROJECT"
+    case "$st" in
+        RUNNING) printf '%-11s RUNNING since %s (%s this run)\n' "State:" "$(when_of "$ts")" "$(fmt $(( $(now) - ts )))" ;;
+        PAUSED)  printf '%-11s PAUSED since %s\n' "State:" "$(when_of "$ts")" ;;
+        *)       printf '%-11s STOPPED at %s\n' "State:" "$(when_of "$ts")" ;;
+    esac
+    printf '%-11s %s   (rounded %s)\n' "Total:" "$(fmt "$secs")" "$(fmt "$(roundup "$secs")")"
+    printf '%-11s %s\n' "Today:" "$(fmt "$today")"
+    [ -n "$others" ] && printf '%-11s %s\n' "Also open:" "$others"
+    return 0
+}
+
+# list [running|paused|stopped|open ...]: the task table, optionally filtered.
+cmd_list() {
+    local want="" a sess t s st mark marked=0 shown=0
+    for a in "$@"; do
+        case "$a" in
+            running|paused|stopped) want="$want $(printf '%s' "$a" | tr '[:lower:]' '[:upper:]')" ;;
+            open) want="$want RUNNING PAUSED" ;;
+            *) echo "Unknown filter '$a'. Use running, paused, stopped or open." >&2; exit 1 ;;
+        esac
+    done
+    if [ ! -s "$LOG" ]; then echo "No timers yet for $PROJECT."; return; fi
+    sess=$(session_task)
+    while IFS=$'\t' read -r t s st; do
+        [ -n "$want" ] && case " $want " in *" $st "*) ;; *) continue ;; esac
+        if [ "$shown" = 0 ]; then printf '%-22s %-9s %s\n' "TASK" "STATE" "TIME"; fi
+        mark=""; [ -n "$sess" ] && [ "$t" = "$sess" ] && { mark=" *"; marked=1; }
+        printf '%-22s %-9s %s%s\n' "$t" "$st" "$(fmt "$s")" "$mark"
+        shown=$((shown+1))
+    done < <(totals)
+    if [ "$shown" = 0 ]; then
+        echo "No$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]' | sed 's/ running paused$/ open/; s/ /, /g; s/^,//') timers in $PROJECT."
+    elif [ "$marked" = 1 ]; then
+        echo "* this session's task"
+    fi
+}
+
 require_tasks() {
     if [ -z "$1" ]; then
         echo "No task given and none could be inferred. Use: timer.sh $2 <task>" >&2
@@ -668,11 +751,12 @@ case "$CMD" in
         ;;
 
     status)
-        if [ ! -s "$LOG" ]; then echo "No timers yet for $PROJECT."; exit 0; fi
-        printf '%-22s %-9s %s\n' "TASK" "STATE" "TIME"
-        totals | while IFS=$'\t' read -r t s st; do
-            printf '%-22s %-9s %s\n' "$t" "$st" "$(fmt "$s")"
-        done
+        cmd_status
+        ;;
+
+    list|ls)
+        # shellcheck disable=SC2086
+        cmd_list $ARGS
         ;;
 
     report)
@@ -743,7 +827,7 @@ case "$CMD" in
 
     *)
         echo "Unknown command: $CMD" >&2
-        sed -n '2,26p' "$0" >&2
+        sed -n '2,30p' "$0" >&2
         exit 1
         ;;
 esac

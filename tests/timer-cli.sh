@@ -37,10 +37,17 @@ has() {
 }
 
 echo "== live timers"
-run "status, empty log" 0 status;          has "No timers yet for ci."
+run "list, empty log" 0 list;              has "No timers yet for ci."
+run "status, no task yet" 0 status;        has "This session has no task yet"
 run "on ABC-1" 0 on ABC-1;                 has "ABC-1 started"
-run "status, running" 0 status;            has "RUNNING"
+run "list, running" 0 list;                has "RUNNING"; has "* this session's task"
+run "status, running" 0 status;            has "RUNNING since"; has "Task:       ABC-1"
+run "list paused, none" 0 list paused;     has "No paused timers in ci."
+run "list bad filter" 1 list foo;          has "Unknown filter 'foo'"
 run "pause" 0 pause ABC-1;                 has "ABC-1 paused"
+run "status, paused" 0 status;             has "PAUSED since"
+run "list paused" 0 list paused;           has "ABC-1"
+run "list running, none" 0 list running;   has "No running timers in ci."
 run "resume" 0 resume ABC-1
 run "off" 0 off ABC-1;                     has "ABC-1 stopped"
 run "on two tasks" 0 on ABC-1,ABC-2

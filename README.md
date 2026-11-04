@@ -37,7 +37,8 @@ Upgrading from version 0.2, when the plugin was named `timer`: run
 /timer on ABC-1,ABC-2      start several tasks
 /timer pause               pause the session's task
 /timer off                 stop the session's task and print its total
-/timer status              live state and elapsed time per task
+/timer status              this session's task: state, since when, total, today
+/timer list [STATE...]     every task, or only running, paused, stopped or open
 /timer report [--split]    tracked and quarter-rounded totals
 /timer day [DATE] [--all]  one day: per-task time, wall clock, timeline
 /timer month [MM-YYYY]     billable hours per day and per task
@@ -56,7 +57,7 @@ with `All` when there are several:
 
 ![/timer off asking which task to stop](docs/ask.png)
 
-![/timer status and /timer day in a Claude Code session](docs/session.png)
+![/timer status and /timer list in a Claude Code session](docs/session.png)
 
 Overlapping tasks each count the full wall time by default; `--split` divides
 shared time between them. Use the split figures when billing.
@@ -67,7 +68,7 @@ The plugin puts `timer.sh` on the Bash tool's PATH, so your own commands,
 skills and scripts run by Claude can call it directly:
 
 ```
-timer.sh status
+timer.sh list open               running and paused tasks of this project
 timer.sh day yesterday --tsv     machine-readable rows
 timer.sh month 08-2026 --tsv
 timer.sh session-task            the task this session last named
@@ -184,9 +185,9 @@ its own, without touching your real logs:
 ```
 bash tests/sample-data.sh /tmp/timer-sample
 export TIMER_HOME=/tmp/timer-sample TIMER_PROJECT=acme-shop
-bin/timer.sh status        ABC-123 running, ABC-120 paused, two stopped
+bin/timer.sh list          ABC-123 running, ABC-120 paused, two stopped
 bin/timer.sh month         about 11.75 billable hours over 3 days
-claude                     then /timer status, /timer off (asks which task)
+claude                     then /timer list, /timer off (asks which task)
 ```
 
 There is no account or service to sign in to.

@@ -1,7 +1,7 @@
 ---
 name: work-timer
 description: Work timer per task and project. Start, pause, resume and stop timers, show live status, and print day and month reports with quarter-rounded billable time. Use for /timer, or when the user asks to start, stop, pause or check time tracking for a task.
-argument-hint: "<on|pause|resume|off|status|report|day|month> [task,...|--all|DATE|MM-YYYY] [--split]"
+argument-hint: "<on|pause|resume|off|status|list|report|day|month> [task,...|--all|DATE|MM-YYYY|running|paused|stopped|open] [--split]"
 allowed-tools: Bash(timer.sh:*)
 user-invocable: false
 ---
@@ -16,7 +16,7 @@ session can be paused or stopped from another.
 
 $ARGUMENTS - The action and optional task list
 
-Format: `<on|pause|resume|off|status|report|day|month> [task[,task2,...]|--all|date|MM-YYYY] [flags]`
+Format: `<on|pause|resume|off|status|list|report|day|month> [task[,task2,...]|--all|date|MM-YYYY|filter] [flags]`
 
 Examples:
 - `/timer on ABC-123` - Start (or resume) one task
@@ -31,7 +31,9 @@ Examples:
 - `/timer off` - Stop the session's task; otherwise ask which open task
 - `/timer off ABC-123` - Stop one task and report its total
 - `/timer off --all` - Stop everything still open
-- `/timer status` - Live state and elapsed time per task
+- `/timer status` - This session's task: state, since when, total, today, other open tasks
+- `/timer list` - Every task of the project with its state and live total
+- `/timer list running` / `paused` / `stopped` / `open` - Only those states (`open` = running and paused; several may be given)
 - `/timer report` - Table with tracked and quarter-rounded totals
 - `/timer report --split` - Divide overlapping time between concurrent tasks
 - `/timer day` - Full-day report for today: per-task time, wall clock, timeline
@@ -61,7 +63,7 @@ Examples:
    The script picks the log file from the current git repository name, so run it
    from inside the project. Set `TIMER_PROJECT=<name>` to override.
 
-3. Report the script's output back plainly. For `off`, `report`, `day` and `month`,
+3. Report the script's output back plainly. For `off`, `list`, `report`, `day` and `month`,
    show the tables as printed. Do not editorialise; the numbers are the answer.
 
 4. Exit code 2 (`on`, `pause`, `resume` or `off` without a task) means the

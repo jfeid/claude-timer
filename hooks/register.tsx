@@ -266,8 +266,8 @@ export const register: Register = on => {
     try {
       await $.command.register({
         name: 'timer',
-        description: 'Work timer: on, pause, resume, off, status, report, day, month',
-        argumentHint: '[on|pause|resume|off|status|report|day|month] [task,...|--all|DATE]',
+        description: 'Work timer: on, pause, resume, off, status, list, report, day, month',
+        argumentHint: '[on|pause|resume|off|status|list|report|day|month] [task,...|--all|DATE|running|paused|stopped]',
       })
     } catch (err) {
       // Another command already owns /timer; the footer still works.
