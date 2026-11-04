@@ -5,7 +5,8 @@ import type { Footer, TimerState } from '../types'
 
 // Shows "PROJECT · ▶ TASK 1h 05m" at the right of the prompt footer.
 // Reads the same files as bin/timer.sh, resolved the same way:
-// project = basename of the git top level (or TIMER_PROJECT), task = the
+// project = basename of the git top level of the session's root folder (or
+// TIMER_PROJECT), task = the
 // session's task, which timer.sh keeps in <TIMER_HOME>/sessions/<session id>.
 // No file of Claude Code's own is read.
 
@@ -164,7 +165,7 @@ async function refresh($: EngineInterface): Promise<void> {
   try {
     const root = await timerHome($)
     const [project, id] = await Promise.all([
-      projectSlug($, await $.session.cwd()),
+      projectSlug($, await $.session.root()),
       $.session.id(),
     ])
     const log = await readIfExists($, `${root}/logs/${project}.tsv`)
@@ -253,7 +254,9 @@ async function runTimer(
     cmd = [bash, script.replace(/\\/g, '/')]
   }
   const r = await $.process.run([...cmd, ...argv], {
-    cwd: await $.session.cwd(),
+    // The session's root, where it started: a shell `cd` into a nested
+    // repository (say internal/) does not move the session to another project.
+    cwd: await $.session.root(),
     // The session id names the file where timer.sh keeps the session's task.
     env: { TIMER_SESSION_ID: await $.session.id() },
     timeoutMs: 30_000,

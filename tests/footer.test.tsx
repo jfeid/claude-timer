@@ -145,14 +145,17 @@ describe('the question when no task can be picked', () => {
 
 const HOME = '/home/u'
 
-test('the footer shows project and the session task', async ($, on) => {
+test('the footer shows the project of the session root and the session task', async ($, on) => {
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
   on('session.id', () => ({ value: 'sid-1' }))
-  on('session.cwd', () => ({ value: '/work/my repo' }))
-  on('process.run', () => ({
+  // The shell moved into a nested repository; the session's root did not.
+  on('session.cwd', () => ({ value: '/work/my repo/internal' }))
+  on('session.root', () => ({ value: '/work/my repo' }))
+  // git answers with the top level of the folder it runs in.
+  on('process.run', (_, e) => ({
     value: {
       exitCode: 0,
-      stdout: '/work/my repo\n',
+      stdout: `${e.init?.cwd ?? ''}\n`,
       stderr: '',
       isStdoutTruncated: false,
       isStderrTruncated: false,
@@ -208,7 +211,7 @@ async function startWith(
 ) {
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
   on('session.id', () => ({ value: 'sid-1' }))
-  on('session.cwd', () => ({ value: '/work/repo' }))
+  on('session.root', () => ({ value: '/work/repo' }))
   on('process.run', (_, e) => {
     const isTimer = (e.argv[0] ?? '').endsWith('/bin/timer.sh')
     const answer = isTimer ? (script[runs.length] ?? { exitCode: 0, stdout: '' }) : null
