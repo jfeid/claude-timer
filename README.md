@@ -1,4 +1,4 @@
-# Claude Code timer
+# <img src=".claude-plugin/icon.png" alt="" width="40" align="top"> Claude Code timer
 
 [![test](https://github.com/jfeid/claude-timer/actions/workflows/test.yml/badge.svg)](https://github.com/jfeid/claude-timer/actions/workflows/test.yml)
 
