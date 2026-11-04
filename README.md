@@ -1,4 +1,4 @@
-# timer
+# Claude Code timer
 
 A Claude Code plugin for tracking work time per task. Timers are kept per
 project (the git repository) and survive session restarts, so a timer started
