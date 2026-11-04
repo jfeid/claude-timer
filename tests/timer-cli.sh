@@ -38,6 +38,7 @@ has() {
 
 echo "== live timers"
 run "list, empty log" 0 list;              has "No timers yet for ci."
+run "on, nothing to start" 0 on;           has "Nothing to start. Name the task: /timer on <task>"
 run "status, no task yet" 0 status;        has "This session has no task yet"
 run "on ABC-1" 0 on ABC-1;                 has "ABC-1 started"
 run "list, running" 0 list;                has "RUNNING"; has "* this session's task"

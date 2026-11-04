@@ -213,7 +213,11 @@ choose_for() {
     else
         echo "No task given. This session's task $sess is $st, so it cannot be $past."
     fi
-    if [ -z "$cand" ]; then echo "Nothing to $verb."; return 3; fi
+    if [ -z "$cand" ]; then
+        if [ "$verb" = start ]; then echo "Nothing to start. Name the task: /timer on <task>"
+        else echo "Nothing to $verb."; fi
+        return 3
+    fi
     echo "$label: $(printf '%s\n' "$cand" | paste -sd, - | sed 's/,/, /g')"
     echo "Ask which to $verb, then run: timer.sh $CMD <task[,task]|--all>"
     return 2

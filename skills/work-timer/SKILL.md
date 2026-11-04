@@ -102,7 +102,8 @@ Precedence when no task is named:
    bare command used to do.
 
 `Nothing to start/pause/resume/stop.` with exit 0 means there is no candidate
-at all; report it and stop.
+at all; report it and stop. For `on`, ask the user which task to start
+(free text) and run `timer.sh on <task>` with the answer.
 
 ## day
 
