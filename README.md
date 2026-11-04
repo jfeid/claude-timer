@@ -27,9 +27,6 @@ every session). From a shell:
 On Windows, install [Git for Windows](https://gitforwindows.org/) first; see
 [Requirements](#requirements).
 
-Upgrading from version 0.2, when the plugin was named `timer`: run
-`/plugin uninstall timer`, then the install line above. Logs are kept.
-
 ## Use
 
 ```

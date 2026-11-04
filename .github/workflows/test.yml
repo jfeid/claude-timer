@@ -1,8 +1,19 @@
 name: test
 
+# Changes to docs and images alone do not run the tests.
 on:
   push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.claude-plugin/icon.png'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.claude-plugin/icon.png'
   workflow_dispatch:
 
 jobs:
