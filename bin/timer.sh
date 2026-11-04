@@ -51,7 +51,7 @@ project_slug() {
     fi
     local top
     top=$(git rev-parse --show-toplevel 2>/dev/null)
-    [ -z "$top" ] && top="$PWD"
+    [ -z "$top" ] && top="$(pwd)"
     # printf avoids basename's trailing newline becoming a stray "-"
     printf '%s' "$(basename "$top")" | tr -c 'A-Za-z0-9._-' '-'
 }
@@ -72,11 +72,16 @@ if date -d @0 +%s >/dev/null 2>&1; then GDATE=date
 elif command -v gdate >/dev/null 2>&1; then GDATE=gdate
 else GDATE=""; fi
 
+# GNU date by either name, each written out.
+gnu_date() {
+    if [ "$GDATE" = gdate ]; then gdate "$@"; else date "$@"; fi
+}
+
 # YYYY-MM-DD for a date spec. BSD date knows today, yesterday, tomorrow and
 # YYYY-MM-DD; anything else ("last friday") needs GNU date.
 day_of() {
     local spec="${1:-today}"
-    if [ -n "$GDATE" ]; then "$GDATE" -d "$spec" +%Y-%m-%d 2>/dev/null; return; fi
+    if [ -n "$GDATE" ]; then gnu_date -d "$spec" +%Y-%m-%d 2>/dev/null; return; fi
     case "$spec" in
         today)     date +%Y-%m-%d ;;
         yesterday) date -v-1d +%Y-%m-%d ;;
@@ -91,17 +96,17 @@ day_of() {
 
 # Epoch of local midnight at the start of YYYY-MM-DD.
 midnight() {
-    if [ -n "$GDATE" ]; then "$GDATE" -d "$1 00:00:00" +%s
+    if [ -n "$GDATE" ]; then gnu_date -d "$1 00:00:00" +%s
     else date -j -f '%Y-%m-%d %H:%M:%S' "$1 00:00:00" +%s; fi
 }
 
 # YYYY-MM-DD plus N days, or plus N months (N may be negative).
 add_days() {
-    if [ -n "$GDATE" ]; then "$GDATE" -d "$1 $(signed "$2") day" +%Y-%m-%d
+    if [ -n "$GDATE" ]; then gnu_date -d "$1 $(signed "$2") day" +%Y-%m-%d
     else date -j -v"$(signed_bsd "$2")"d -f %Y-%m-%d "$1" +%Y-%m-%d; fi
 }
 add_months() {
-    if [ -n "$GDATE" ]; then "$GDATE" -d "$1 $(signed "$2") month" +%Y-%m-%d
+    if [ -n "$GDATE" ]; then gnu_date -d "$1 $(signed "$2") month" +%Y-%m-%d
     else date -j -v"$(signed_bsd "$2")"m -f %Y-%m-%d "$1" +%Y-%m-%d; fi
 }
 signed() { if [ "$1" -lt 0 ]; then echo "- $(( -$1 ))"; else echo "+ $1"; fi; }
@@ -109,13 +114,11 @@ signed_bsd() { if [ "$1" -lt 0 ]; then echo "$1"; else echo "+$1"; fi; }
 
 # Format an epoch, or a YYYY-MM-DD, with a strftime format.
 fmt_epoch() {
-    if [ -n "$GDATE" ]; then "$GDATE" -d "@$1" "+$2"; else date -r "$1" "+$2"; fi
+    if [ -n "$GDATE" ]; then gnu_date -d "@$1" "+$2"; else date -r "$1" "+$2"; fi
 }
 fmt_day() {
-    if [ -n "$GDATE" ]; then "$GDATE" -d "$1" "+$2"; else date -j -f %Y-%m-%d "$1" "+$2"; fi
+    if [ -n "$GDATE" ]; then gnu_date -d "$1" "+$2"; else date -j -f %Y-%m-%d "$1" "+$2"; fi
 }
-# The same, as an awk command prefix: cmd = DAY_CMD " " day " +%a"
-if [ -n "$GDATE" ]; then DAY_CMD="LC_ALL=C $GDATE -d"; else DAY_CMD="LC_ALL=C date -j -f %Y-%m-%d"; fi
 
 # Comma/space separated list -> newline separated, deduped, order preserved.
 split_tasks() {
@@ -540,11 +543,16 @@ cmd_month() {
     # Per day
     printf '%-11s %-4s %-6s %-9s %-9s %s\n' DATE DAY TASKS TRACKED BILLABLE WALL
     printf '%s\n' "----------------------------------------------------------------"
-    printf '%s\n' "$rows" | awk -F'\t' -v daycmd="$DAY_CMD" "$awk_fmt"'
+    # Weekday names, looked up here rather than run from awk: "2026-11-02=Mon ..."
+    local d wds=""
+    for d in $(printf '%s\n' "$rows" | awk -F'\t' 'NF && !seen[$1]++ { print $1 }'); do
+        wds="$wds $d=$(LC_ALL=C fmt_day "$d" %a)"
+    done
+    printf '%s\n' "$rows" | awk -F'\t' -v wds="$wds" "$awk_fmt"'
+        BEGIN { nw=split(wds, x, " "); for (j=1;j<=nw;j++) { split(x[j], y, "="); wd_of[y[1]]=y[2] } }
         NF { if (!($1 in n)) { order[++k]=$1; w[$1]=$6 } n[$1]++; s[$1]+=$4; r[$1]+=$5 }
         END {
-            for (i=1;i<=k;i++) { d=order[i]
-                cmd=daycmd " " d " +%a"; cmd | getline wd; close(cmd)
+            for (i=1;i<=k;i++) { d=order[i]; wd=wd_of[d]
                 printf "%-11s %-4s %-6d %-9s %-9s %s\n", d, wd, n[d], fmt(s[d]), fmt(r[d]), fmt(w[d])
                 ts+=s[d]; tr+=r[d]; tw+=w[d] }
             print "----------------------------------------------------------------"
