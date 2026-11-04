@@ -103,6 +103,34 @@ Settings, as environment variables:
 | `TIMER_PROJECT` | git top-level folder name | force the project name |
 | `TIMER_QUARTER` | `900` | rounding step in seconds |
 
+## What the mod does
+
+The `/timer` command and the footer come from `hooks/register.tsx`. It sends
+nothing over the network. In detail:
+
+- **Programs it runs:** `git rev-parse --show-toplevel` in the session's
+  folder, for the project name; `bin/timer.sh` with the `/timer` arguments,
+  through bash. On Windows it runs `git --exec-path` to find Git Bash's
+  `bash.exe`, unless `CLAUDE_CODE_GIT_BASH_PATH` names it.
+- **What it reads:** the timer log of the current project
+  (`~/.claude/timer/logs/<project>.tsv`); the session files in
+  `~/.claude/sessions/`, only their `sessionId`, `name` and `nameSource`
+  fields, to find this session's name; and the variables `HOME`,
+  `USERPROFILE`, `TIMER_HOME`, `TIMER_PROJECT` and
+  `CLAUDE_CODE_GIT_BASH_PATH`. It reads no credentials.
+- **What it gives Claude:** the output of each `/timer` run, as context for
+  the conversation. When the script cannot tell which task you mean, it
+  submits one prompt that holds the command, the script's output, and an
+  instruction to ask you which task with AskUserQuestion and then run
+  `timer.sh` with your choice.
+- **Hooks:**
+  - `command.run` answers `/timer` only.
+  - `tool.call` on Bash passes every call on unchanged and refreshes the footer
+    after one whose command mentions `timer.sh`.
+  - `prompt.submit` passes every prompt on unchanged and refreshes the footer.
+  - `ui.render` on `SessionMode` draws the footer.
+  - No hook makes or changes a permission decision.
+
 ## Requirements
 
 - bash (3.2 or later) and the usual shell tools: present on Linux and macOS.

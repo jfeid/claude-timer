@@ -83,9 +83,10 @@ export function pick(
 }
 
 export function fmt(s: number): string {
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`
+  // Not `h`: JSX in this file compiles to calls of h.
+  const hours = Math.floor(s / 3600)
+  const mins = Math.floor((s % 3600) / 60)
+  return hours > 0 ? `${hours}h ${String(mins).padStart(2, '0')}m` : `${mins}m`
 }
 
 async function projectSlug($: EngineInterface, cwd: string): Promise<string> {
@@ -315,7 +316,7 @@ export const register: Register = on => {
       return { text: asBlock(out) }
     }
     return { text: asBlock(out), context: [`${shown} printed:\n${out}`] }
-  }).catch(($, e, next) => (next.called ? next(e) : { text: 'timer: the command failed to run' }))
+  }).catch(($, e, next) => next(e))
 
   // Pick up /timer on|pause|off at once instead of on the next tick.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
