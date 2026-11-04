@@ -145,6 +145,25 @@ nothing over the network and reads no file of Claude Code's own. In detail:
   `CLAUDE_CODE_GIT_BASH_PATH` or next to `git`. Without it (PowerShell only)
   the script, `/timer` and the skill do not work.
 
+Sandbox: with Claude Code's sandbox turned on, Claude's Bash tool cannot
+write outside the project folder, so `timer.sh` run by Claude (plain-language
+requests, your own commands and scripts) fails to save. Allow the timer's
+folder in `~/.claude/settings.json`:
+
+```json
+{
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": ["~/.claude/timer"]
+    }
+  }
+}
+```
+
+Merge it with any `allowWrite` entries you already have; use your
+`TIMER_HOME` instead if you set one. `/timer` and the footer do not need it:
+the mod runs `timer.sh` outside the sandbox.
+
 Dates: with GNU `date` (Linux, Git Bash on Windows, or `gdate` from
 `brew install coreutils` on macOS) `day` takes anything `date -d` reads, such
 as `"last friday"`. With the macOS `date` it takes `today`, `yesterday`,
