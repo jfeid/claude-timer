@@ -12,8 +12,10 @@ import {
   icons,
   isSafeId,
   isWindowsPath,
+  nameFromSessionFile,
   pick,
   question,
+  sessionTask,
   slugOf,
   timerArgv,
   totals,
@@ -43,11 +45,30 @@ describe('log parsing', () => {
   })
 
   test("the session file's last line for the project wins", async () => {
-    const file = 'proj\tABC-1\nother\tZZZ-1\nproj\tABC-2\n'
-    expect(boundTask(file, 'proj')).toBe('ABC-2')
-    expect(boundTask(file, 'other')).toBe('ZZZ-1')
+    const file = 'proj\tABC-1\nother\tZZZ-1\nproj\tABC-2\tNAME-1\n'
+    expect(boundTask(file, 'proj')).toEqual({ task: 'ABC-2', name: 'NAME-1' })
+    expect(boundTask(file, 'other')).toEqual({ task: 'ZZZ-1', name: '' })
     expect(boundTask(file, 'none')).toBe(null)
     expect(boundTask('', 'proj')).toBe(null)
+  })
+
+  test('the session name is the task unless a task was named after it', async () => {
+    expect(sessionTask('', 'proj', 'PFLX-1')).toBe('PFLX-1')
+    expect(sessionTask('proj\tPFLX-2\tPFLX-1\n', 'proj', 'PFLX-1')).toBe('PFLX-2')
+    expect(sessionTask('proj\tPFLX-2\tPFLX-1\n', 'proj', 'PFLX-3')).toBe('PFLX-3')
+    expect(sessionTask('proj\tPFLX-2\tPFLX-1\n', 'proj', '')).toBe('PFLX-2')
+    expect(sessionTask('', 'proj', '')).toBe(null)
+  })
+
+  test("the session's name comes from its own file, when the person set it", async () => {
+    const file = (name: string, source: string, id = 'sid-1') =>
+      JSON.stringify({ sessionId: id, name, nameSource: source, formerNames: [{ name: 'X' }] })
+    expect(nameFromSessionFile(file('PFLX-1', 'user'), 'sid-1')).toBe('PFLX-1')
+    expect(nameFromSessionFile(file('brave-otter', 'derived'), 'sid-1')).toBe('')
+    expect(nameFromSessionFile(file('fix the login', 'user'), 'sid-1')).toBe('')
+    expect(nameFromSessionFile(file('A-1,A-2', 'user'), 'sid-1')).toBe('')
+    expect(nameFromSessionFile(file('PFLX-1', 'user', 'sid-2'), 'sid-1')).toBe(null)
+    expect(nameFromSessionFile('not json', 'sid-1')).toBe(null)
   })
 
   test("the session's project is the project of its last named task", async () => {
@@ -120,7 +141,7 @@ describe('log parsing', () => {
 })
 
 describe('the question when no task can be picked', () => {
-  const OUT = 'No task given, and this session has not named one yet.\nOpen: ABC-1, ABC-2\nAsk which to stop, then run: timer.sh off <task[,task]|--all>'
+  const OUT = 'No task given, and this session has no task: no session name and no task named yet.\nOpen: ABC-1, ABC-2\nAsk which to stop, then run: timer.sh off <task[,task]|--all>'
 
   test('candidates come from the label line', async () => {
     expect(candidates(OUT)).toEqual(['ABC-1', 'ABC-2'])
@@ -151,7 +172,7 @@ describe('the question when no task can be picked', () => {
 
 const HOME = '/home/u'
 
-test('the footer shows the project of the session root and the session task', async ($, on) => {
+test('the footer shows the project of the session root and the session name as task', async ($, on) => {
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
   on('session.id', () => ({ value: 'sid-1' }))
   // The shell moved into a nested repository; the session's root did not.
@@ -168,9 +189,19 @@ test('the footer shows the project of the session root and the session task', as
     },
   }))
   on('fs.exists', () => ({ value: true }))
-  on('fs.read', (_, e) => ({
-    value: e.path === `${HOME}/.claude/timer/sessions/sid-1` ? 'my-repo\tXYZ-9\n' : LOG,
+  on('fs.list', () => ({
+    value: [
+      { name: '200.json', kind: 'file', size: 1, mtimeMs: 0, isLink: false },
+      { name: '100.json', kind: 'file', size: 1, mtimeMs: 0, isLink: false },
+    ],
   }))
+  // The session named a task (OLD-1) in my-repo, then was renamed to XYZ-9.
+  const files: Record<string, string> = {
+    [`${HOME}/.claude/timer/sessions/sid-1`]: 'my-repo\tOLD-1\tOLD-0\n',
+    [`${HOME}/.claude/sessions/200.json`]: JSON.stringify({ sessionId: 'other', name: 'ABC-556', nameSource: 'user' }),
+    [`${HOME}/.claude/sessions/100.json`]: JSON.stringify({ sessionId: 'sid-1', name: 'XYZ-9', nameSource: 'user' }),
+  }
+  on('fs.read', (_, e) => ({ value: files[e.path] ?? LOG }))
   on('clock.now', () => ({ value: NOW * 1000 }))
   on('clock.every', () => ({ value: undefined }))
   on('command.register', () => ({ value: { command: 'timer' } }))
@@ -240,14 +271,14 @@ async function startWith(
   await $.session.start({ cwd: '/work/repo', surface: 'terminal', isInteractive: true })
 }
 
-test('/timer runs the script with the session id', async ($, on) => {
+test('/timer runs the script with the session id and name', async ($, on) => {
   const runs: Run[] = []
   await startWith($, on, [{ exitCode: 0, stdout: 'ABC-1 paused\n' }], runs)
 
   const r = await $.command.run({ ...TYPED, command: 'timer', args: 'pause ABC-1' })
   expect(r.text).toBe('ABC-1 paused')
   expect(runs[0]?.argv).toEqual(['pause', 'ABC-1'])
-  expect(runs[0]?.env).toEqual({ TIMER_SESSION_ID: 'sid-1' })
+  expect(runs[0]?.env).toEqual({ TIMER_SESSION_ID: 'sid-1', TIMER_SESSION_NAME: '' })
 })
 
 test('/timer asks which task when the script cannot pick one', async ($, on) => {
@@ -262,7 +293,7 @@ test('/timer asks which task when the script cannot pick one', async ($, on) => 
     $,
     on,
     [
-      { exitCode: 2, stdout: 'No task given, and this session has not named one yet.\nOpen: ABC-1, ABC-2\n' },
+      { exitCode: 2, stdout: 'No task given, and this session has no task: no session name and no task named yet.\nOpen: ABC-1, ABC-2\n' },
       { exitCode: 0, stdout: 'ABC-2 stopped — 10m (600s)\n' },
     ],
     runs,

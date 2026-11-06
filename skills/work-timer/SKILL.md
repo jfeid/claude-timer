@@ -74,23 +74,29 @@ Examples:
    the chosen task list (or `--all`) and report that output. Never pick for
    the user, and never act on every task without that answer.
 
-5. Never look for the session's name or task in Claude Code's own files
-   (`~/.claude/sessions/`, `~/.claude/projects/` or transcripts). When the
-   task is unclear, ask the user.
+5. Do not look for the session's name or task yourself: `timer.sh` reads the
+   session's name on its own (`timer.sh session-name` prints it), and never
+   read transcripts for it. When the task is unclear, ask the user.
 
 ## on / pause / resume / off without a task
 
 Precedence when no task is named:
 
-1. The session's task: the last single task named with `on`, `pause`,
-   `resume` or `off` in this session (`timer.sh session-task` prints it). The
-   script keeps it in its own folder, keyed by the session id. When that task
-   is in a state the verb can act on, it is the only one acted on, even when
-   other tasks are open:
+1. The session's task (`timer.sh session-task` prints it), whichever came
+   last of:
+   - the session's name, when the user set one (`/rename PFLX-1` or
+     `claude -n PFLX-1`) with no spaces or commas; names Claude generated are
+     ignored;
+   - the last single task named with `on`, `pause`, `resume` or `off` in
+     this session, which the script keeps in its own folder, keyed by the
+     session id.
+
+   When that task is in a state the verb can act on, it is the only one
+   acted on, even when other tasks are open:
 
    | Verb | Acts on the session task when it is |
    |---|---|
-   | `on` | paused (resumes) or stopped (restarts) |
+   | `on` | paused (resumes), stopped (restarts) or new (starts) |
    | `pause` | running |
    | `resume` | paused |
    | `off` | running or paused |
@@ -181,7 +187,8 @@ scripts consume.
 - `timer.sh day DATE --tsv` - machine-readable day rows
 - `timer.sh month MM-YYYY --tsv` - machine-readable month rows
 - `timer.sh tasks` - list known task names for this project
-- `timer.sh session-task` - the task this session last named
+- `timer.sh session-task` - this session's task
+- `timer.sh session-name` - the session's name, when it can be a task
 - `timer.sh where` - print the log file path
 - `timer.sh cancel <task>` - erase a task's entries entirely
 

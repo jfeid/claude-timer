@@ -46,11 +46,21 @@ so it is instant and costs no tokens. You can also just ask Claude ("start the
 timer for ABC-123", "how long have I worked today?"); the plugin's skill runs
 the same actions.
 
-**The session's task** is the last single task you named in this session
-with `on`, `pause`, `resume` or `off`. After `/timer on ABC-123`, a plain
-`/timer pause`, `/timer on` or `/timer off` acts on ABC-123. When there is no
-such task, or it is in the wrong state, you are asked which task to act on,
-with an option for all of them when there are several:
+**The session's task** is the session's name, or the last single task you
+named with `on`, `pause`, `resume` or `off`, whichever came last. Name the
+session after the ticket and a plain `/timer on` starts it:
+
+```
+/rename ABC-123            or start the session with: claude -n ABC-123
+/timer on                  starts ABC-123
+/timer on ABC-200          a task named later wins: pause and off now act on ABC-200
+/rename ABC-300            a later rename wins again
+```
+
+A name with spaces or commas is not a task key and is ignored, and so are
+the names Claude gives sessions by itself. When the session has no task, or
+it is in the wrong state, you are asked which task to act on, with an option
+for all of them when there are several:
 
 ![/timer off asking which task to stop](docs/ask.png)
 
@@ -72,7 +82,8 @@ skills and scripts run by Claude can call it directly:
 timer.sh list open               running and paused tasks of this project
 timer.sh day yesterday --tsv     machine-readable rows
 timer.sh month 08-2026 --tsv
-timer.sh session-task            the task this session last named
+timer.sh session-task            this session's task
+timer.sh session-name            the session's name, when it can be a task
 timer.sh where                   path of this project's log
 ```
 
@@ -94,13 +105,28 @@ It refreshes every 30 seconds and right after any `timer.sh` call.
 
 ## Data
 
-Everything stays on your computer; see [PRIVACY.md](PRIVACY.md).
+No data leaves your computer through this plugin. It makes no network
+connections, and has no server, account, telemetry or update check. What it
+reads and writes is listed below and stays on your machine.
+
+`/timer` output (task names and times) is shown in your conversation, and
+Claude Code sends the conversation to Anthropic, as with any command's
+output. The logs and session files themselves are never sent. See
+[PRIVACY.md](PRIVACY.md).
+
+What it writes:
 
 - `~/.claude/timer/logs/<project>.tsv`: one file per project, with the columns
   `task`, `event` (`START`, `PAUSE`, `RESUME`, `STOP`), `epoch` and
   `timestamp`. Plain text; it can be edited by hand.
-- `~/.claude/timer/sessions/<session id>`: the session's task, as
-  `project<TAB>task` lines. Files untouched for 30 days are removed.
+- `~/.claude/timer/sessions/<session id>`: the session's named task, as
+  `project<TAB>task<TAB>session name` lines. Files untouched for 30 days are
+  removed.
+
+What it reads besides those: the session's entry in Claude Code's
+`~/.claude/sessions/<pid>.json`, for the fields `sessionId`, `name` and
+`nameSource` only. Nothing else of Claude Code's: no transcripts, history,
+memory, settings or credentials.
 
 Settings, as environment variables:
 
@@ -108,12 +134,13 @@ Settings, as environment variables:
 |---|---|---|
 | `TIMER_HOME` | `~/.claude/timer` | where `logs/` and `sessions/` live |
 | `TIMER_PROJECT` | the session task's project, else the git top-level folder name | force the project name |
+| `TIMER_SESSION_NAME` | the name you gave the session | use this as the session's name (empty: none) |
 | `TIMER_QUARTER` | `900` | rounding step in seconds |
 
 ## What the mod does
 
 The `/timer` command and the footer come from `hooks/register.tsx`. It sends
-nothing over the network and reads no file of Claude Code's own. In detail:
+nothing over the network. In detail:
 
 - **Programs it runs:** `git rev-parse --show-toplevel` in the session's
   folder, for the project name; `bin/timer.sh` with the `/timer` arguments,
@@ -121,13 +148,17 @@ nothing over the network and reads no file of Claude Code's own. In detail:
   `bash.exe`, unless `CLAUDE_CODE_GIT_BASH_PATH` names it.
 - **What it reads:** the current project's log and this session's file under
   `~/.claude/timer/` (the plugin's own folder); the session's id and folder
-  from Claude Code; and the variables `HOME`, `USERPROFILE`, `TIMER_HOME`,
-  `TIMER_PROJECT` and `CLAUDE_CODE_GIT_BASH_PATH`. It reads no credentials.
+  from Claude Code; the session's name from the entry in
+  `~/.claude/sessions/` whose `sessionId` is this session's (fields
+  `sessionId`, `name`, `nameSource`); and the variables `HOME`,
+  `USERPROFILE`, `CLAUDE_CONFIG_DIR`, `TIMER_HOME`, `TIMER_PROJECT` and
+  `CLAUDE_CODE_GIT_BASH_PATH`. It reads no credentials.
 - **What it asks:** when `timer.sh` cannot tell which task you mean, the mod
   asks you in Claude Code's question dialog, listing the tasks the script
   named, and runs the script again with your answer. It submits no prompts.
 - **What it gives Claude:** the output of each `/timer` run, as context for
-  the conversation.
+  the conversation. It passes the session's id and name to `timer.sh` as
+  `TIMER_SESSION_ID` and `TIMER_SESSION_NAME`.
 - **Hooks:**
   - `command.run` answers `/timer` only.
   - `tool.call` on Bash passes every call on unchanged and refreshes the footer

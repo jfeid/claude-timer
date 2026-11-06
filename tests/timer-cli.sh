@@ -7,7 +7,9 @@ set -u
 T="$(cd "$(dirname "$0")/.." && pwd)/bin/timer.sh"
 TIMER_HOME=$(mktemp -d)
 export TIMER_HOME TIMER_PROJECT=ci TIMER_SESSION_ID=ci-session TZ=UTC
-unset CLAUDE_CODE_SESSION_ID
+# Claude Code's folder, with session files written below; never the real one.
+export CLAUDE_CONFIG_DIR="$TIMER_HOME/claude"
+unset CLAUDE_CODE_SESSION_ID CLAUDE_PID TIMER_SESSION_NAME
 trap 'rm -rf "$TIMER_HOME"' EXIT
 
 fails=0
@@ -38,7 +40,7 @@ has() {
 
 echo "== live timers"
 run "list, empty log" 0 list;              has "No timers yet for ci."
-run "on, nothing to start" 0 on;           has "Nothing to start. Name the task: /timer on <task>"
+run "on, nothing to start" 0 on;           has "Nothing to start. Name the task: /timer on <task>, or /rename"
 run "status, no task yet" 0 status;        has "This session has no task yet"
 run "on ABC-1" 0 on ABC-1;                 has "ABC-1 started"
 run "list, running" 0 list;                has "RUNNING"; has "* this session's task"
@@ -55,7 +57,7 @@ run "on two tasks" 0 on ABC-1,ABC-2
 run "off acts on the session's task" 0 off; has "ABC-1 stopped"
 run "on ABC-1 again" 0 on ABC-1
 TIMER_SESSION_ID=other run "another session asks" 2 off
-has "this session has not named one yet"; has "Open: ABC-1, ABC-2"
+has "this session has no task"; has "Open: ABC-1, ABC-2"
 run "off --all" 0 off --all;               has "ABC-2 stopped"
 run "report" 0 report;                     has "TOTAL"
 run "tasks" 0 tasks;                       has "ABC-2"
@@ -79,6 +81,38 @@ TIMER_SESSION_ID=s-2 run "on restarts it" 0 on;          has "XYZ-1 started"
 CLAUDE_CODE_SESSION_ID=s-2 TIMER_SESSION_ID= run "id from Claude's Bash tool" 0 session-task; has "XYZ-1"
 TIMER_SESSION_ID=../x run "unsafe id is ignored" 0 session-task
 [ ! -e "$TIMER_HOME/x" ] && echo "ok     no file outside sessions/" || { echo "FAIL   wrote outside sessions/"; fails=$((fails + 1)); }
+run "off --all" 0 off --all
+
+echo "== session name"
+# session FILE ID NAME SOURCE: a Claude Code session file.
+session() {
+    mkdir -p "$CLAUDE_CONFIG_DIR/sessions"
+    printf '{"pid":%s,"sessionId":"%s","name":"%s","nameSource":"%s"}\n' \
+        "$1" "$2" "$3" "$4" | sed 's/}$/,"formerNames":[{"name":"OLD-NAME","sessionId":"s-old"}]}/' \
+        > "$CLAUDE_CONFIG_DIR/sessions/$1.json"
+}
+session 101 s-name PFLX-1 user
+session 102 s-gen brave-otter derived
+session 103 s-space "fix the login" user
+CLAUDE_PID=101 TIMER_SESSION_ID=s-name run "name from CLAUDE_PID" 0 session-name; has "PFLX-1"
+TIMER_SESSION_ID=s-name run "name found by session id" 0 session-name; has "PFLX-1"
+CLAUDE_PID=102 TIMER_SESSION_ID=s-name run "another session's file is not used" 0 session-name; has "PFLX-1"
+TIMER_SESSION_ID=s-old run "a former session id is not this one" 0 session-name
+[ -z "$out" ] && echo "ok     empty" || { echo "FAIL   expected empty, got: $out"; fails=$((fails + 1)); }
+TIMER_SESSION_ID=s-gen run "generated name is ignored" 0 session-task
+[ -z "$out" ] && echo "ok     empty" || { echo "FAIL   expected empty, got: $out"; fails=$((fails + 1)); }
+TIMER_SESSION_ID=s-space run "name with spaces is ignored" 0 session-task
+[ -z "$out" ] && echo "ok     empty" || { echo "FAIL   expected empty, got: $out"; fails=$((fails + 1)); }
+TIMER_SESSION_ID=s-name run "on starts the name" 0 on;        has "PFLX-1 started"
+TIMER_SESSION_ID=s-name run "pause uses the name" 0 pause;    has "PFLX-1 paused"
+TIMER_SESSION_ID=s-name run "a named task wins" 0 on PFLX-2;  has "PFLX-2 started"
+TIMER_SESSION_ID=s-name run "session-task" 0 session-task;    has "PFLX-2"
+TIMER_SESSION_ID=s-name run "off stops PFLX-2" 0 off;         has "PFLX-2 stopped"
+session 101 s-name PFLX-3 user
+TIMER_SESSION_ID=s-name run "a later rename wins" 0 on;       has "PFLX-3 started"
+TIMER_SESSION_NAME= TIMER_SESSION_ID=s-gen run "empty TIMER_SESSION_NAME" 0 session-name
+[ -z "$out" ] && echo "ok     empty" || { echo "FAIL   expected empty, got: $out"; fails=$((fails + 1)); }
+TIMER_SESSION_NAME=OVR-1 TIMER_SESSION_ID=s-gen run "TIMER_SESSION_NAME" 0 session-task; has "OVR-1"
 run "off --all" 0 off --all
 
 echo "== nested repositories"

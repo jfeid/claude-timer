@@ -26,7 +26,8 @@
 #                                    tracked and billable time (per task per day, rounded up to
 #                                    the quarter, then summed); default: current month
 #   timer.sh tasks                   list known task names
-#   timer.sh session-task            the task this session last named
+#   timer.sh session-task            this session's task (see below)
+#   timer.sh session-name            the session's name, when it can be a task
 #   timer.sh cancel <task>           erase a task's entries entirely
 #
 # Log lives at ~/.claude/timer/logs/<project>.tsv, so timers survive session
@@ -34,20 +35,23 @@
 # Override the project with TIMER_PROJECT=name. In a session that has named a
 # task, the project stays that task's project wherever the shell moves.
 #
-# The session's task is the last single task named with on, pause, resume or
-# off in that session, kept in ~/.claude/timer/sessions/<session id>. The id
-# comes from TIMER_SESSION_ID or CLAUDE_CODE_SESSION_ID; no file of Claude
-# Code's own is read.
+# The session's task is whichever came last: the session's name, when you
+# set one (/rename or claude -n) with no spaces or commas, or the last single
+# task named with on, pause, resume or off in that session. The name is read
+# from Claude Code's ~/.claude/sessions/<pid>.json; the named task is kept in
+# ~/.claude/timer/sessions/<session id>. The id comes from TIMER_SESSION_ID or
+# CLAUDE_CODE_SESSION_ID.
 
 set -uo pipefail
 
 ROOT="${TIMER_HOME:-$HOME/.claude/timer}"
 LOGDIR="$ROOT/logs"
 QUARTER="${TIMER_QUARTER:-900}"   # rounding granularity in seconds
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# This session's task: the last single task named with on, pause, resume or
-# off in this session and project. Kept by this script in
-# $ROOT/sessions/<session id> as "project<TAB>task" lines, the last for a
+# The last single task named with on, pause, resume or off in this session and
+# project, kept by this script in $ROOT/sessions/<session id> as
+# "project<TAB>task<TAB>session name at the time" lines, the last for a
 # project winning. Files untouched for 30 days are removed.
 SESSION_ID="${TIMER_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 SESSION_FILE=""
@@ -55,6 +59,48 @@ case "$SESSION_ID" in
     ""|*[!A-Za-z0-9_-]*) ;;
     *) SESSION_FILE="$ROOT/sessions/$SESSION_ID" ;;
 esac
+
+# One top-level string field of a JSON file, with jq or, without it, the
+# first "key": "value" in the file (Claude Code writes top-level keys before
+# nested ones such as formerNames).
+json_str() {
+    if command -v jq >/dev/null 2>&1; then
+        jq -r --arg k "$2" '.[$k] // empty | strings' "$1" 2>/dev/null
+    else
+        grep -oE '"'"$2"'"[[:space:]]*:[[:space:]]*"[^"]*"' "$1" 2>/dev/null | head -1 |
+            sed 's/^[^:]*:[[:space:]]*"//; s/"$//'
+    fi
+}
+
+# The session's name when the person set it, from Claude Code's
+# sessions/<pid>.json (CLAUDE_PID in Claude's Bash tool), else the file there
+# whose sessionId is this session's. A name Claude generated (nameSource
+# "derived") is no name, and so is one with spaces or commas, which cannot be
+# a task. TIMER_SESSION_NAME, when set (the /timer command sets it, empty for
+# none), is used instead of the lookup.
+session_name() {
+    local f="" name=""
+    if [ -n "${TIMER_SESSION_NAME+set}" ]; then
+        name=$TIMER_SESSION_NAME
+    else
+        if [ -n "${CLAUDE_PID:-}" ] && [ -r "$CLAUDE_DIR/sessions/$CLAUDE_PID.json" ]; then
+            f="$CLAUDE_DIR/sessions/$CLAUDE_PID.json"
+            if [ -n "$SESSION_ID" ] && [ "$(json_str "$f" sessionId)" != "$SESSION_ID" ]; then f=""; fi
+        fi
+        if [ -z "$f" ] && [ -n "$SESSION_FILE" ] && [ -d "$CLAUDE_DIR/sessions" ]; then
+            local c
+            while IFS= read -r c; do
+                if [ "$(json_str "$c" sessionId)" = "$SESSION_ID" ]; then f=$c; break; fi
+            done < <(grep -lF "\"$SESSION_ID\"" "$CLAUDE_DIR/sessions"/*.json 2>/dev/null)
+        fi
+        if [ -n "$f" ] && [ "$(json_str "$f" nameSource)" != derived ]; then
+            name=$(json_str "$f" name)
+        fi
+    fi
+    case "$name" in *[[:space:],]*) name="" ;; esac
+    printf '%s' "$name"
+}
+SESSION_NAME="$(session_name)"
 
 # The project: TIMER_PROJECT; else, in a session that has named a task, that
 # task's project, so a shell that moved into a nested repository (say
@@ -177,9 +223,22 @@ all_known_tasks() { awk -F'\t' 'NF{print $1}' "$LOG" | awk '!seen[$0]++'; }
 
 last_task() { awk -F'\t' 'NF{t=$1} END{if(t!="") print t}' "$LOG"; }
 
-session_task() {
+# The last "task<TAB>name at the time" this session named in this project.
+bound_line() {
     [ -n "$SESSION_FILE" ] && [ -r "$SESSION_FILE" ] || return 0
-    awk -F'\t' -v p="$PROJECT" '$1==p { t=$2 } END { if (t!="") print t }' "$SESSION_FILE"
+    awk -F'\t' -v p="$PROJECT" '$1==p && $2!="" { t=$2; n=$3 } END { if (t!="") print t "\t" n }' "$SESSION_FILE"
+}
+
+# This session's task: the session's name when it was set or changed after the
+# last task named here, else that task.
+session_task() {
+    local t n
+    IFS=$'\t' read -r t n <<< "$(bound_line)"
+    if [ -n "$SESSION_NAME" ] && [ "$SESSION_NAME" != "$n" ]; then
+        echo "$SESSION_NAME"
+    elif [ -n "$t" ]; then
+        echo "$t"
+    fi
 }
 
 # bind_session LIST: remember LIST as this session's task when it is one task.
@@ -191,9 +250,9 @@ bind_session() {
     [ -n "$SESSION_FILE" ] || return 0
     t=$(printf '%s\n' "$1" | awk 'NF')
     [ -n "$t" ] && [ "$(printf '%s\n' "$t" | wc -l | tr -d ' ')" = 1 ] || return 0
-    [ "$(session_task)" = "$t" ] && return 0
+    [ "$(bound_line)" = "$t"$'\t'"$SESSION_NAME" ] && return 0
     if ! mkdir -p "$ROOT/sessions" 2>/dev/null ||
-       ! printf '%s\t%s\n' "$PROJECT" "$t" 2>/dev/null >> "$SESSION_FILE"; then
+       ! printf '%s\t%s\t%s\n' "$PROJECT" "$t" "$SESSION_NAME" 2>/dev/null >> "$SESSION_FILE"; then
         echo "timer: cannot save this session's task to $SESSION_FILE; nothing changed" >&2
         exit 1
     fi
@@ -218,12 +277,12 @@ choose_for() {
         fi
     fi
     if [ -z "$sess" ]; then
-        echo "No task given, and this session has not named one yet."
+        echo "No task given, and this session has no task: no session name and no task named yet."
     else
         echo "No task given. This session's task $sess is $st, so it cannot be $past."
     fi
     if [ -z "$cand" ]; then
-        if [ "$verb" = start ]; then echo "Nothing to start. Name the task: /timer on <task>"
+        if [ "$verb" = start ]; then echo "Nothing to start. Name the task: /timer on <task>, or /rename the session to it"
         else echo "Nothing to $verb."; fi
         return 3
     fi
@@ -648,7 +707,7 @@ cmd_status() {
     others=$(open_others "$sess")
     if [ -z "$sess" ] || [ "$(state_of "$sess")" = NONE ]; then
         if [ -z "$sess" ]; then
-            echo "This session has no task yet. Start or name one with: /timer on <task>"
+            echo "This session has no task yet. Start one with /timer on <task>, or /rename the session to it."
         else
             echo "This session's task $sess has no timer in $PROJECT."
         fi
@@ -720,7 +779,8 @@ case "$CMD" in
                        cand=$(last_task); label="Last task"
                        [ -n "$cand" ] && [ "$(state_of "$cand")" = RUNNING ] && cand=""
                    fi
-                   choose_or_exit start started "PAUSED STOPPED" "$cand" "$label" 1; list=$LIST ;;
+                   choose_or_exit start started "PAUSED STOPPED" "$cand" "$label" 1; list=$LIST
+                   bind_session "$list" ;;
             --all) list=$(tasks_in_state PAUSED)
                    [ -z "$list" ] && list=$(last_task)
                    require_tasks "$list" "on" ;;
@@ -741,7 +801,7 @@ case "$CMD" in
         else want=PAUSED; ev=RESUME; done_=resumed; not="not paused"; fi
         case "$ARGS" in
             "")    choose_or_exit "$([ "$want" = RUNNING ] && echo pause || echo resume)" "$done_" "$want" "$(tasks_in_state "$want")" "$([ "$want" = RUNNING ] && echo Running || echo Paused)"
-                   list=$LIST ;;
+                   list=$LIST; bind_session "$list" ;;
             --all) list=$(tasks_in_state "$want")
                    if [ -z "$list" ]; then echo "Nothing to $([ "$want" = RUNNING ] && echo pause || echo resume)."; exit 0; fi ;;
             *)     list=$(split_tasks "${ARGS//--all/}"); bind_session "$list" ;;
@@ -759,7 +819,8 @@ case "$CMD" in
     off|stop)
         open_tasks() { printf '%s\n%s\n' "$(tasks_in_state RUNNING)" "$(tasks_in_state PAUSED)" | awk 'NF'; }
         case "$ARGS" in
-            "")    choose_or_exit stop stopped "RUNNING PAUSED" "$(open_tasks)" Open; list=$LIST ;;
+            "")    choose_or_exit stop stopped "RUNNING PAUSED" "$(open_tasks)" Open; list=$LIST
+                   bind_session "$list" ;;
             --all) list=$(open_tasks)
                    if [ -z "$list" ]; then echo "Nothing to stop."; exit 0; fi ;;
             *)     list=$(split_tasks "${ARGS//--all/}"); bind_session "$list" ;;
@@ -838,6 +899,10 @@ case "$CMD" in
 
     session-task)
         session_task
+        ;;
+
+    session-name)
+        printf '%s\n' "$SESSION_NAME" | awk 'NF'
         ;;
 
     cancel)

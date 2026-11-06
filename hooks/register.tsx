@@ -7,8 +7,9 @@ import type { Footer, TimerState } from '../types'
 // Reads the same files as bin/timer.sh, resolved the same way:
 // project = TIMER_PROJECT, else the project of the session's named task, else
 // the basename of the git top level of the session's root folder; task = the
-// session's task, which timer.sh keeps in <TIMER_HOME>/sessions/<session id>.
-// No file of Claude Code's own is read.
+// session's task: the session's name when the person set it (read from Claude
+// Code's sessions/<pid>.json) unless a task was named since, which timer.sh
+// keeps in <TIMER_HOME>/sessions/<session id>.
 
 const footer = atom({ plugin: 'worklog-timer', key: 'footer' } as const, null, {
   shape: 'footer-2',
@@ -53,15 +54,43 @@ export function totals(log: string, nowSec: number): Totals {
   return out
 }
 
-// Same as timer.sh's session_task(): the last "project<TAB>task" line of the
-// session file for this project.
-export function boundTask(sessionFile: string, project: string): string | null {
-  let task: string | null = null
+// Same as timer.sh's bound_line(): the last "project<TAB>task<TAB>name" line
+// of the session file for this project, name being the session's name when
+// the task was named.
+export function boundTask(
+  sessionFile: string,
+  project: string,
+): { task: string; name: string } | null {
+  let bound: { task: string; name: string } | null = null
   for (const line of sessionFile.split('\n')) {
-    const [p, t] = line.split('\t')
-    if (p === project && t) task = t
+    const [p, t, n] = line.split('\t')
+    if (p === project && t) bound = { task: t, name: n ?? '' }
   }
-  return task
+  return bound
+}
+
+// Same as timer.sh's session_task(): the session's name when it was set or
+// changed after the last task named in this project, else that task.
+export function sessionTask(sessionFile: string, project: string, name: string): string | null {
+  const bound = boundTask(sessionFile, project)
+  if (name && name !== (bound?.name ?? '')) return name
+  return bound?.task ?? null
+}
+
+// Same as timer.sh's session_name(), for one Claude Code session file: null
+// when the file is another session's (or unreadable); '' when the name is one
+// Claude generated (nameSource "derived") or holds spaces or commas, which
+// cannot be a task; else the name the person set.
+export function nameFromSessionFile(json: string, id: string): string | null {
+  let j: { sessionId?: unknown; name?: unknown; nameSource?: unknown }
+  try {
+    j = JSON.parse(json) as typeof j
+  } catch {
+    return null
+  }
+  if (!j || j.sessionId !== id) return null
+  const name = typeof j.name === 'string' && j.nameSource !== 'derived' ? j.name : ''
+  return /[\s,]/.test(name) ? '' : name
 }
 
 // Same as timer.sh's project_slug() in a session: the project of the
@@ -122,14 +151,47 @@ export function slugOf(top: string): string {
   return base.replace(/[^A-Za-z0-9._-]/g, '-')
 }
 
-// TIMER_HOME, else ~/.claude/timer. HOME, or USERPROFILE on Windows where
-// HOME is usually unset; Git Bash sets its HOME from USERPROFILE too, so
-// timer.sh writes the same folder.
+// HOME, or USERPROFILE on Windows where HOME is usually unset; Git Bash sets
+// its HOME from USERPROFILE too, so timer.sh reads the same folders.
+async function homeDir($: EngineInterface): Promise<string> {
+  return (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
+}
+
+// TIMER_HOME, else ~/.claude/timer.
 async function timerHome($: EngineInterface): Promise<string> {
-  const set = await $.env.get('TIMER_HOME')
-  if (set) return set
-  const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
-  return `${home}/.claude/timer`
+  return (await $.env.get('TIMER_HOME')) || `${await homeDir($)}/.claude/timer`
+}
+
+// The session's name when the person set it, from the file in Claude Code's
+// sessions/ folder whose sessionId is this session's ('' when none), as
+// timer.sh reads it. The file found is remembered for the next refresh.
+let sessionPath: string | null = null
+async function sessionName($: EngineInterface): Promise<string> {
+  const id = await $.session.id()
+  const nameIn = async (path: string): Promise<string | null> => {
+    try {
+      return nameFromSessionFile(await $.fs.read(path), id)
+    } catch {
+      return null
+    }
+  }
+  if (sessionPath) {
+    const name = await nameIn(sessionPath)
+    if (name !== null) return name
+    sessionPath = null
+  }
+  const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await homeDir($)}/.claude`
+  const dir = `${config}/sessions`
+  if (!(await $.fs.exists(dir).catch(() => false))) return ''
+  for (const entry of await $.fs.list(dir)) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
+    const name = await nameIn(`${dir}/${entry.name}`)
+    if (name !== null) {
+      sessionPath = `${dir}/${entry.name}`
+      return name
+    }
+  }
+  return ''
 }
 
 export const isWindowsPath = (p: string): boolean => /^[A-Za-z]:[\\/]|^\\\\/.test(p)
@@ -185,7 +247,8 @@ async function refresh($: EngineInterface): Promise<void> {
       (await projectSlug($, await $.session.root()))
     const log = await readIfExists($, `${root}/logs/${project}.tsv`)
     const now = Math.floor((await $.clock.now()) / 1000)
-    const next = pick(boundTask(binding, project), project, totals(log, now))
+    const name = await sessionName($).catch(() => '')
+    const next = pick(sessionTask(binding, project, name), project, totals(log, now))
     await update($, footer, () => next)
   } catch (err) {
     $.ui.log(`timer: refresh failed: ${String(err)}`, { to: 'debug' })
@@ -272,7 +335,12 @@ async function runTimer(
     // repository (say internal/) does not move the session to another project.
     cwd: await $.session.root(),
     // The session id names the file where timer.sh keeps the session's task.
-    env: { TIMER_SESSION_ID: await $.session.id() },
+    // The script finds the session's name from CLAUDE_PID, which this child
+    // does not have; hand it the name the footer reads ('' for none).
+    env: {
+      TIMER_SESSION_ID: await $.session.id(),
+      TIMER_SESSION_NAME: await sessionName($).catch(() => ''),
+    },
     timeoutMs: 30_000,
   })
   const out = [r.stdout, r.stderr].map(s => s.trimEnd()).filter(Boolean).join('\n')
