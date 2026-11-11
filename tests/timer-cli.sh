@@ -221,10 +221,12 @@ check "$(count STOP TR-1)" 1 "STOP line kept"
 bk=$(ls "$TIMER_HOME/backups"/trim.*.tsv | head -1)
 check "$(cat "$bk")" "$before" "backup holds the old log"
 tr_run "closed run, HH:MM inside it" 0 trim TR-1 11:15; has "ends at 2026-01-15 11:15"
+t0=$(date +%s)
 tr_run "running: paused at the cut" 0 trim TR-2 -1h
-has "TR-2 paused at"; has "cut 1h 00m. Total 4h 00m → 3h 00m."; has "/timer on TR-2 to continue."
-# The script reads the clock a moment after NOW: allow a few seconds.
-check "$(awk -F'\t' -v w=$((NOW - 3600)) '$1=="TR-2" && $2=="PAUSE" { print ($3 >= w && $3 <= w + 5) ? "yes" : $3 }' "$TL")" yes "PAUSE one hour before now"
+t1=$(date +%s)
+has "TR-2 paused at"; has "cut 1h 00m. Total 4h"; has "/timer on TR-2 to continue."
+# One hour before the moment the script ran, which is between t0 and t1.
+check "$(awk -F'\t' -v a=$((t0 - 3600)) -v b=$((t1 - 3600)) '$1=="TR-2" && $2=="PAUSE" { print ($3 >= a && $3 <= b) ? "yes" : $3 }' "$TL")" yes "PAUSE one hour before now"
 tr_run "session task is now TR-2" 0 session-task; has "TR-2"
 tr_run "paused run: bare trim uses the session task" 0 trim -30m; has "TR-2 last run now ends at"
 tr_run "running, --resume" 0 trim TR-3 -30m --resume; has "TR-3 paused at"; has "resumed now"
