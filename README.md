@@ -34,6 +34,7 @@ On Windows, install [Git for Windows](https://gitforwindows.org/) first; see
 /timer on ABC-1,ABC-2      start several tasks
 /timer pause               pause the session's task
 /timer off                 stop the session's task and print its total
+/timer trim [task] 16:04   it really ended at 16:04: cut a timer left running
 /timer status              this session's task: state, since when, total, today
 /timer list [STATE...]     every task, or only running, paused, stopped or open
 /timer report [--split]    tracked and quarter-rounded totals
@@ -69,6 +70,13 @@ session has named a task, the project stays that task's project, even after
 Claude's shell moves into a nested repository such as `internal/`.
 
 ![/timer status and /timer list in a Claude Code session](docs/session.png)
+
+**A timer left running** while you were away: `/timer trim 16:04` ends the
+session task's last run at 16:04 (or `-3h10m` cuts that much off the end, and
+`2026-11-10 18:30` names the day). A running timer is paused there; add
+`--resume` to keep it running from now, or `--stop` to stop it. A paused or
+stopped one keeps its state. Trim only shortens the last run, applies at
+once and prints the backup it made of the log first.
 
 Overlapping tasks each count the full wall time by default; `--split` divides
 shared time between them. Use the split figures when billing.
@@ -119,6 +127,8 @@ What it writes:
 - `~/.claude/timer/logs/<project>.tsv`: one file per project, with the columns
   `task`, `event` (`START`, `PAUSE`, `RESUME`, `STOP`), `epoch` and
   `timestamp`. Plain text; it can be edited by hand.
+- `~/.claude/timer/backups/<project>.<epoch>.tsv`: a copy of a log, made
+  before `trim` or `cancel` changes it. Files older than 30 days are removed.
 - `~/.claude/timer/sessions/<session id>`: the session's named task, as
   `project<TAB>task<TAB>session name` lines. Files untouched for 30 days are
   removed.
@@ -132,7 +142,7 @@ Settings, as environment variables:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `TIMER_HOME` | `~/.claude/timer` | where `logs/` and `sessions/` live |
+| `TIMER_HOME` | `~/.claude/timer` | where `logs/`, `backups/` and `sessions/` live |
 | `TIMER_PROJECT` | the session task's project, else the git top-level folder name | force the project name |
 | `TIMER_SESSION_NAME` | the name you gave the session | use this as the session's name (empty: none) |
 | `TIMER_QUARTER` | `900` | rounding step in seconds |

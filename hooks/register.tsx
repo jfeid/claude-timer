@@ -306,12 +306,13 @@ export function question(verb: string, tasks: string[]): { text: string; options
   return { text: `Which task for /timer ${verb}?`, options }
 }
 
-// timer.sh arguments for the answer, or null when nothing should run.
-export function answerArgv(verb: string, answer: string): string[] | null {
+// timer.sh arguments for the answer, or null when nothing should run. REST
+// is what followed the verb when no task was named, such as trim's time.
+export function answerArgv(verb: string, answer: string, rest: string[] = []): string[] | null {
   const a = answer.trim()
   if (!a || a === NO_CHANGE) return null
-  if (a === ALL_TASKS) return [verb, '--all']
-  return [verb, ...timerArgv(a)]
+  if (a === ALL_TASKS) return [verb, '--all', ...rest]
+  return [verb, ...timerArgv(a), ...rest]
 }
 
 async function runTimer(
@@ -357,8 +358,8 @@ export const register: Register = on => {
     try {
       await $.command.register({
         name: 'timer',
-        description: 'Work timer: on, pause, resume, off, status, list, report, day, month',
-        argumentHint: '[on|pause|resume|off|status|list|report|day|month] [task,...|--all|DATE|running|paused|stopped]',
+        description: 'Work timer: on, pause, resume, off, trim, status, list, report, day, month',
+        argumentHint: '[on|pause|resume|off|trim|status|list|report|day|month] [task,...|--all|DATE|HH:MM|-DURATION|running|paused|stopped]',
       })
     } catch (err) {
       // Another command already owns /timer; the footer still works.
@@ -385,7 +386,7 @@ export const register: Register = on => {
         // Dismissed: show what the script said and change nothing.
         return { text: asBlock(res.out) }
       }
-      const again = answerArgv(verb, answer)
+      const again = answerArgv(verb, answer, argv.slice(1))
       if (!again) return { text: 'Nothing changed.' }
       argv = again
       res = await runTimer($, argv)

@@ -10,6 +10,8 @@ On your computer only, under `~/.claude/timer/` (or `TIMER_HOME`):
 - **Timer logs**, one per project (`logs/<project>.tsv`): the task names you
   give, such as ticket keys, and the time of each start, pause, resume and
   stop. The project name is the folder name of the git repository.
+- **Backups** (`backups/<project>.<epoch>.tsv`): a copy of a timer log, made
+  before `trim` or `cancel` changes it.
 - **Session files** (`sessions/<session id>`): for each Claude Code session,
   the project, the last task you named there, and the session's name at
   that moment.
@@ -44,9 +46,10 @@ it: not the logs, and not the session files.
 ## Keeping and deleting
 
 The files are kept until you delete them. Session files untouched for 30
-days are removed automatically.
+days, and backups older than 30 days, are removed automatically.
 
-- Delete one task: `timer.sh cancel <task>`.
+- Delete one task: `timer.sh cancel <task>`. The backup it makes keeps the
+  task for 30 days; delete it from `backups/` too to remove it at once.
 - Delete everything: remove `~/.claude/timer/` (or your `TIMER_HOME`).
 - Uninstalling the plugin leaves the files in place.
 

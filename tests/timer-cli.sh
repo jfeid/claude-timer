@@ -185,6 +185,56 @@ has "split	SPL-1	1800	1800"
 TIMER_PROJECT=split run "day --tsv, unsplit" 0 day 2026-01-16 --tsv
 has "split	SPL-1	3600	3600"
 
+echo "== trim"
+# TR-1 ran 09:00-18:00 on 2026-01-15 (UTC), paused, then stopped; TR-2 has
+# been running for four hours; TR-3 for two.
+NOW=$(date +%s)
+TL="$TIMER_HOME/logs/trim.tsv"
+printf '%s\t%s\t%s\t-\n' \
+    TR-1 START 1768467600 TR-1 PAUSE 1768500000 TR-1 STOP 1768500100 \
+    TR-2 START $((NOW - 14400)) TR-3 START $((NOW - 7200)) > "$TL"
+tr_run() { TIMER_PROJECT=trim TIMER_SESSION_ID=s-trim run "$@"; }
+# count EVENT TASK: lines of that task and event in the trim log.
+count() { awk -F'\t' -v e="$1" -v k="$2" '$1==k && $2==e' "$TL" | wc -l | tr -d ' '; }
+check() { if [ "$1" = "$2" ]; then echo "ok     $3"; else echo "FAIL   $3: got '$1', expected '$2'"; fails=$((fails + 1)); fi; }
+
+tr_run "no task: ask between the running" 2 trim -1h
+has "Running: TR-2, TR-3"; has "timer.sh trim <task[,task]|--all> -1h"
+tr_run "no time: show the last run" 0 trim TR-2
+has "TR-2: last run"; has "4h 00m, running"
+check "$(ls "$TIMER_HOME/backups"/trim.* 2>/dev/null | wc -l | tr -d ' ')" 0 "no backup without a change"
+before=$(cat "$TL")
+tr_run "before the run's start" 1 trim TR-1 2026-01-15 08:00; has "is not within the last run"
+tr_run "after the run's end" 1 trim TR-1 2026-01-15 19:00; has "trim only shortens"
+tr_run "in the future" 1 trim TR-2 2030-01-01 10:00; has "is in the future"
+tr_run "longer than the run" 1 trim TR-3 -3h; has "is not within the last run"
+tr_run "one bad task stops all" 1 trim TR-1,TR-2 2026-01-15 12:00; has "Nothing changed."
+tr_run "bad time" 1 trim TR-2 25:00; has "Cannot read the time"
+tr_run "bad duration" 1 trim TR-2 -3x; has "Cannot read the duration"
+check "$(cat "$TL")" "$before" "refused trims leave the log alone"
+
+tr_run "closed run, exact time" 0 trim TR-1 2026-01-15 12:30
+has "TR-1 last run now ends at 2026-01-15 12:30 instead of 2026-01-15 18:00: cut 5h 30m. Total 9h 00m → 3h 30m."
+has "Backup: $TIMER_HOME/backups/trim."
+check "$(awk -F'\t' '$1=="TR-1" && $2=="PAUSE" { print $3 "|" $4 }' "$TL")" "1768480200|2026-01-15 12:30:00" "PAUSE line rewritten"
+check "$(count STOP TR-1)" 1 "STOP line kept"
+bk=$(ls "$TIMER_HOME/backups"/trim.*.tsv | head -1)
+check "$(cat "$bk")" "$before" "backup holds the old log"
+tr_run "closed run, HH:MM inside it" 0 trim TR-1 11:15; has "ends at 2026-01-15 11:15"
+tr_run "running: paused at the cut" 0 trim TR-2 -1h
+has "TR-2 paused at"; has "cut 1h 00m. Total 4h 00m → 3h 00m."; has "/timer on TR-2 to continue."
+# The script reads the clock a moment after NOW: allow a few seconds.
+check "$(awk -F'\t' -v w=$((NOW - 3600)) '$1=="TR-2" && $2=="PAUSE" { print ($3 >= w && $3 <= w + 5) ? "yes" : $3 }' "$TL")" yes "PAUSE one hour before now"
+tr_run "session task is now TR-2" 0 session-task; has "TR-2"
+tr_run "paused run: bare trim uses the session task" 0 trim -30m; has "TR-2 last run now ends at"
+tr_run "running, --resume" 0 trim TR-3 -30m --resume; has "TR-3 paused at"; has "resumed now"
+check "$(TIMER_PROJECT=trim "$T" list running)" "$(printf 'TASK                   STATE     TIME\nTR-3                   RUNNING   1h 30m')" "TR-3 still running, 30m less"
+printf '%s\t%s\t%s\t-\n' TR-4 START $((NOW - 3600)) >> "$TL"
+tr_run "running, --stop" 0 trim TR-4 -20m --stop; has "TR-4 stopped at"
+check "$(count STOP TR-4)" 1 "STOP written"
+tr_run "cancel keeps a backup" 0 cancel TR-4; has "TR-4 removed"; has "Backup: $TIMER_HOME/backups/trim."
+grep -q "TR-4" "$(ls -t "$TIMER_HOME/backups"/trim.*.tsv | head -1)" && echo "ok     backup holds TR-4" || { echo "FAIL   backup lacks TR-4"; fails=$((fails + 1)); }
+
 echo "== paths with spaces"
 SP="$TIMER_HOME/with space"
 mkdir -p "$SP/logs"; cp "$TIMER_HOME/logs/ci.tsv" "$SP/logs/ci.tsv"

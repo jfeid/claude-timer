@@ -28,7 +28,16 @@
 #   timer.sh tasks                   list known task names
 #   timer.sh session-task            this session's task (see below)
 #   timer.sh session-name            the session's name, when it can be a task
+#   timer.sh trim [task,...|--all] [HH:MM|YYYY-MM-DD HH:MM|-DURATION] [--stop|--resume]
+#                                    end the task's last run earlier: at that time, or
+#                                    DURATION (-3h, -90m, -1h30m) before its end. A running
+#                                    task is paused at the cut (--stop: stopped; --resume:
+#                                    paused there and resumed now); a paused or stopped one
+#                                    keeps its state. Without a time: show the last run.
 #   timer.sh cancel <task>           erase a task's entries entirely
+#
+# trim and cancel copy the log to ~/.claude/timer/backups/ before changing it;
+# backups older than 30 days are removed.
 #
 # Log lives at ~/.claude/timer/logs/<project>.tsv, so timers survive session
 # restarts and several projects can run their own timers at the same time.
@@ -130,7 +139,6 @@ if ! mkdir -p "$LOGDIR" 2>/dev/null || ! touch "$LOG" 2>/dev/null; then
 fi
 
 now() { date +%s; }
-stamp() { date '+%Y-%m-%d %H:%M:%S'; }
 
 # ---- dates: GNU date (Linux, Git Bash, gdate on macOS) or BSD date (macOS) ---
 
@@ -191,9 +199,11 @@ split_tasks() {
     echo "$*" | tr ',' ' ' | tr -s ' ' '\n' | awk 'NF && !seen[$0]++'
 }
 
-# Append one event; a failed write ends the script before any success is printed.
+# Append one event, now or at the epoch given as $3; a failed write ends the
+# script before any success is printed.
 emit() {
-    if ! printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$(now)" "$(stamp)" 2>/dev/null >> "$LOG"; then
+    local at="${3:-$(now)}"
+    if ! printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$at" "$(fmt_epoch "$at" '%Y-%m-%d %H:%M:%S')" 2>/dev/null >> "$LOG"; then
         echo "timer: cannot write $LOG" >&2
         exit 1
     fi
@@ -287,7 +297,7 @@ choose_for() {
         return 3
     fi
     echo "$label: $(printf '%s\n' "$cand" | paste -sd, - | sed 's/,/, /g')"
-    echo "Ask which to $verb, then run: timer.sh $CMD <task[,task]|--all>"
+    echo "Ask which to $verb, then run: timer.sh $CMD <task[,task]|--all>${HINT_REST:+ $HINT_REST}"
     return 2
 }
 
@@ -759,6 +769,175 @@ cmd_list() {
     fi
 }
 
+# ---- backups and trim -------------------------------------------------------
+
+# Copy the log to $ROOT/backups/<project>.<epoch>.tsv before it is changed and
+# set BACKUP to its path; backups older than 30 days are removed. When the copy
+# fails the script stops, so nothing is changed without one.
+backup_log() {
+    local dir="$ROOT/backups" base n=1
+    base="$dir/$PROJECT.$(now)"
+    BACKUP="$base.tsv"
+    while [ -e "$BACKUP" ]; do n=$((n+1)); BACKUP="$base-$n.tsv"; done
+    if ! mkdir -p "$dir" 2>/dev/null || ! cp "$LOG" "$BACKUP" 2>/dev/null; then
+        echo "timer: cannot back up $LOG to $dir; nothing changed" >&2
+        exit 1
+    fi
+    find "$dir" -type f -name '*.tsv' -mtime +30 -exec rm -f {} + 2>/dev/null
+    return 0
+}
+
+# A task's last run: start <TAB> end <TAB> closing line number <TAB> open(1|0).
+# end and line are 0 while it runs (not empty: read would merge the tabs).
+# A STOP after a PAUSE closes nothing, so the PAUSE stays the closing line.
+last_run() {
+    awk -F'\t' -v k="$1" '
+        $1==k && ($2=="START" || $2=="RESUME") { if (!open) { open=1; a=$3; b=""; ln="" } }
+        $1==k && ($2=="PAUSE" || $2=="STOP")   { if (open)  { open=0; b=$3; ln=NR } }
+        END { if (a!="") printf "%s\t%d\t%d\t%d\n", a, b, ln, open }' "$LOG"
+}
+
+# Epoch of HH:MM on YYYY-MM-DD, local time.
+epoch_at() {
+    if [ -n "$GDATE" ]; then gnu_date -d "$1 $2:00" +%s 2>/dev/null
+    else date -j -f '%Y-%m-%d %H:%M:%S' "$1 $2:00" +%s 2>/dev/null; fi
+}
+
+# Seconds in a duration such as 3h, 90m or 1h30m (no sign), or nothing.
+dur_secs() {
+    [[ "$1" =~ ^([0-9]+)h([0-9]+)m?$ ]] && { echo $(( 10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60 )); return; }
+    [[ "$1" =~ ^([0-9]+)h$ ]] && { echo $(( 10#${BASH_REMATCH[1]} * 3600 )); return; }
+    [[ "$1" =~ ^([0-9]+)m$ ]] && { echo $(( 10#${BASH_REMATCH[1]} * 60 )); return; }
+    return 0
+}
+
+# A task's total in seconds.
+total_of() { totals | awk -F'\t' -v k="$1" '$1==k { print $2 }'; }
+
+# TRIM_CAND: the tasks trim asks between, and --all acts on: the running
+# ones, else the paused ones, else the last task used. TRIM_LABEL names them.
+trim_candidates() {
+    TRIM_CAND=$(tasks_in_state RUNNING); TRIM_LABEL=Running
+    [ -z "$TRIM_CAND" ] && { TRIM_CAND=$(tasks_in_state PAUSED); TRIM_LABEL=Open; }
+    [ -z "$TRIM_CAND" ] && { TRIM_CAND=$(last_task); TRIM_LABEL="Last task"; }
+    return 0
+}
+
+# trim [task,...|--all] [HH:MM|YYYY-MM-DD HH:MM|-DURATION] [--stop|--resume]
+cmd_trim() {
+    local a all=0 mode=pause tasks="" day="" hm="" dur="" spec="" list
+    for a in "$@"; do
+        case "$a" in
+            --all)    all=1 ;;
+            --stop)   mode=stop ;;
+            --resume) mode=resume ;;
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) day=$a ;;
+            *:*)
+                if [[ "$a" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; then hm=$a
+                else echo "Cannot read the time '$a'. Use HH:MM, YYYY-MM-DD HH:MM or -DURATION (-3h, -90m, -1h30m)." >&2; exit 1; fi ;;
+            -[0-9]*)
+                dur=$(dur_secs "${a#-}")
+                if [ -z "$dur" ] || [ "$dur" -le 0 ]; then
+                    echo "Cannot read the duration '$a'. Use -3h, -90m or -1h30m." >&2; exit 1
+                fi ;;
+            -*)       echo "Unknown option '$a'. Use --all, --stop or --resume." >&2; exit 1 ;;
+            *)        tasks="${tasks:+$tasks }$a" ;;
+        esac
+    done
+    if [ -n "$day" ] && [ -z "$hm" ]; then echo "Give a time after the date: $day HH:MM." >&2; exit 1; fi
+    if [ -n "$dur" ] && [ -n "$hm" ]; then echo "Give either a time or a duration, not both." >&2; exit 1; fi
+    if [ -n "$dur" ]; then spec="-${dur}s"
+    elif [ -n "$hm" ]; then spec="${day:+$day }$hm"; fi
+
+    if [ -n "$tasks" ]; then
+        list=$(split_tasks "$tasks"); bind_session "$list"
+    elif [ "$all" = 1 ]; then
+        trim_candidates; list=$TRIM_CAND
+        [ -z "$list" ] && { echo "Nothing to trim."; exit 0; }
+    else
+        trim_candidates
+        # The hint names the time, so the caller reruns with it.
+        HINT_REST="$*"
+        choose_or_exit trim trimmed "RUNNING PAUSED STOPPED" "$TRIM_CAND" "$TRIM_LABEL"; list=$LIST
+        bind_session "$list"
+    fi
+
+    # Work out every cut first: nothing is written unless all of them are valid.
+    local t st start end ln open n cut plan="" bad=0 nowe d
+    nowe=$(now)
+    while IFS= read -r t; do
+        [ -z "$t" ] && continue
+        st=$(state_of "$t")
+        if [ "$st" = NONE ]; then echo "$t has no timer in $PROJECT."; bad=1; continue; fi
+        IFS=$'\t' read -r start end ln open < <(last_run "$t")
+        [ "$open" = 1 ] && end=$nowe
+        if [ -z "$spec" ]; then
+            echo "$t: last run $(when_of "$start")-$(when_of "$end") ($(fmt $((end-start)))$([ "$open" = 1 ] && echo ', running'))."
+            echo "  Trim it with: /timer trim $t HH:MM, or -DURATION to cut that much off the end."
+            continue
+        fi
+        if [ -n "$dur" ]; then
+            cut=$((end - dur))
+        elif [ -n "$day" ]; then
+            cut=$(epoch_at "$day" "$hm")
+            [ -z "$cut" ] && { echo "Cannot read the date '$day $hm'." >&2; exit 1; }
+        else
+            # The latest HH:MM before the run's end.
+            d=$(fmt_epoch "$end" %Y-%m-%d)
+            cut=$(epoch_at "$d" "$hm")
+            [ -n "$cut" ] && [ "$cut" -ge "$end" ] && cut=$(epoch_at "$(add_days "$d" -1)" "$hm")
+            [ -z "$cut" ] && { echo "Cannot read the time '$hm'." >&2; exit 1; }
+        fi
+        if [ "$cut" -gt "$nowe" ]; then
+            echo "$t: $(when_of "$cut") is in the future."; bad=1
+        elif [ "$cut" -ge "$end" ]; then
+            echo "$t: trim only shortens; the last run already ends at $(when_of "$end")."; bad=1
+        elif [ "$cut" -le "$start" ]; then
+            echo "$t: $(when_of "$cut") is not within the last run ($(when_of "$start")-$(when_of "$end")). Older runs are edited by hand: timer.sh where"; bad=1
+        else
+            plan="$plan$t"$'\t'"$cut"$'\t'"$end"$'\t'"$ln"$'\t'"$open"$'\t'"$(total_of "$t")"$'\n'
+        fi
+    done <<< "$list"
+    [ -z "$spec" ] && return 0
+    if [ "$bad" = 1 ]; then echo "Nothing changed."; exit 1; fi
+
+    backup_log
+    local before after verb rewrites=""
+    # Closed runs: rewrite their closing lines in one pass (line number, epoch,
+    # timestamp). Line numbers do not move, and running tasks only append.
+    while IFS=$'\t' read -r t cut end ln open before; do
+        [ "$open" = 0 ] && [ -n "$ln" ] &&
+            rewrites="$rewrites$ln"$'\t'"$cut"$'\t'"$(fmt_epoch "$cut" '%Y-%m-%d %H:%M:%S')"$'\n'
+    done <<< "$plan"
+    if [ -n "$rewrites" ]; then
+        if ! printf '%s' "$rewrites" | awk -F'\t' -v OFS='\t' '
+                NR==FNR { ep[$1]=$2; st[$1]=$3; next }
+                (FNR in ep) { $3=ep[FNR]; $4=st[FNR] }
+                { print }' - "$LOG" > "$LOG.tmp" 2>/dev/null || ! mv "$LOG.tmp" "$LOG" 2>/dev/null; then
+            rm -f "$LOG.tmp"
+            echo "timer: cannot write $LOG; nothing changed" >&2
+            exit 1
+        fi
+    fi
+    while IFS=$'\t' read -r t cut end ln open before; do
+        [ -z "$t" ] && continue
+        if [ "$open" = 1 ]; then
+            case "$mode" in
+                stop)   emit "$t" STOP "$cut";  verb="stopped at $(when_of "$cut")" ;;
+                resume) emit "$t" PAUSE "$cut"; emit "$t" RESUME; verb="paused at $(when_of "$cut") and resumed now" ;;
+                *)      emit "$t" PAUSE "$cut"; verb="paused at $(when_of "$cut")" ;;
+            esac
+        else
+            verb="last run now ends at $(when_of "$cut") instead of $(when_of "$end")"
+        fi
+        after=$(total_of "$t")
+        echo "$t $verb: cut $(fmt $((end - cut))). Total $(fmt "$before") → $(fmt "$after")."
+        [ "$open" = 1 ] && [ "$mode" = pause ] && echo "  /timer on $t to continue."
+        [ "$open" = 0 ] && [ "$mode" != pause ] && echo "  (--$mode applies to a running task only; $t keeps its state.)"
+    done <<< "$plan"
+    echo "Backup: $BACKUP"
+}
+
 require_tasks() {
     if [ -z "$1" ]; then
         echo "No task given and none could be inferred. Use: timer.sh $2 <task>" >&2
@@ -893,6 +1072,11 @@ case "$CMD" in
         cmd_month $ARGS
         ;;
 
+    trim)
+        # shellcheck disable=SC2086
+        cmd_trim $ARGS
+        ;;
+
     tasks)
         all_known_tasks
         ;;
@@ -907,10 +1091,12 @@ case "$CMD" in
 
     cancel)
         require_tasks "$ARGS" "cancel"
+        backup_log
         for t in $(split_tasks "$ARGS"); do
             awk -F'\t' -v k="$t" '$1!=k' "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
             echo "$t removed from the log"
         done
+        echo "Backup: $BACKUP"
         ;;
 
     where)
@@ -919,7 +1105,7 @@ case "$CMD" in
 
     *)
         echo "Unknown command: $CMD" >&2
-        sed -n '2,30p' "$0" >&2
+        sed -n '2,40p' "$0" >&2
         exit 1
         ;;
 esac

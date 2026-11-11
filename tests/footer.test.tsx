@@ -163,6 +163,12 @@ describe('the question when no task can be picked', () => {
     expect(answerArgv('on', ' NEW-7 ')).toEqual(['on', 'NEW-7'])
   })
 
+  test('trim keeps the time and flags typed after the verb', async () => {
+    expect(answerArgv('trim', 'ABC-2', ['16:04'])).toEqual(['trim', 'ABC-2', '16:04'])
+    expect(answerArgv('trim', 'All listed tasks', ['-1h', '--stop'])).toEqual(['trim', '--all', '-1h', '--stop'])
+    expect(answerArgv('trim', 'Change nothing', ['16:04'])).toBe(null)
+  })
+
   test('tasks named All or Cancel are tasks, not choices', async () => {
     expect(question('off', ['All', 'OTHER-1']).options).toEqual(['All', 'OTHER-1', 'All listed tasks'])
     expect(answerArgv('off', 'All')).toEqual(['off', 'All'])

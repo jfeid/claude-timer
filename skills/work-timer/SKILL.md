@@ -1,7 +1,7 @@
 ---
 name: work-timer
-description: Work timer per task and project. Start, pause, resume and stop timers, show live status, and print day and month reports with quarter-rounded billable time. Use for /timer, or when the user asks to start, stop, pause or check time tracking for a task.
-argument-hint: "<on|pause|resume|off|status|list|report|day|month> [task,...|--all|DATE|MM-YYYY|running|paused|stopped|open] [--split]"
+description: Work timer per task and project. Start, pause, resume and stop timers, trim a timer left running back to when work ended, show live status, and print day and month reports with quarter-rounded billable time. Use for /timer, or when the user asks to start, stop, pause or check time tracking for a task.
+argument-hint: "<on|pause|resume|off|trim|status|list|report|day|month> [task,...|--all|DATE|MM-YYYY|HH:MM|-DURATION|running|paused|stopped|open] [--split|--stop|--resume]"
 allowed-tools: Bash(timer.sh:*)
 user-invocable: false
 ---
@@ -16,7 +16,7 @@ session can be paused or stopped from another.
 
 $ARGUMENTS - The action and optional task list
 
-Format: `<on|pause|resume|off|status|list|report|day|month> [task[,task2,...]|--all|date|MM-YYYY|filter] [flags]`
+Format: `<on|pause|resume|off|trim|status|list|report|day|month> [task[,task2,...]|--all|date|MM-YYYY|time|filter] [flags]`
 
 Examples:
 - `/timer on ABC-123` - Start (or resume) one task
@@ -31,6 +31,11 @@ Examples:
 - `/timer off` - Stop the session's task; otherwise ask which open task
 - `/timer off ABC-123` - Stop one task and report its total
 - `/timer off --all` - Stop everything still open
+- `/timer trim 16:04` - The session's task really ended at 16:04: cut its last run there
+- `/timer trim ABC-123 -3h10m` - Cut 3h 10m off the end of that task's last run
+- `/timer trim ABC-123 2026-11-10 18:30` - Cut at an exact date and time
+- `/timer trim 16:04 --resume` / `--stop` - A running task: keep it running from now / stop it
+- `/timer trim ABC-123` - Show the task's last run, change nothing
 - `/timer status` - This session's task: state, since when, total, today, other open tasks
 - `/timer list` - Every task of the project with its state and live total
 - `/timer list running` / `paused` / `stopped` / `open` - Only those states (`open` = running and paused; several may be given)
@@ -112,6 +117,31 @@ Precedence when no task is named:
 at all; report it and stop. For `on`, ask the user which task to start
 (free text) and run `timer.sh on <task>` with the answer.
 
+## trim
+
+`trim [task,...|--all] [HH:MM|YYYY-MM-DD HH:MM|-DURATION] [--stop|--resume]`
+fixes a timer left running unattended, or paused or stopped late: it ends
+the task's **last run** earlier, and changes nothing else.
+
+- `HH:MM` is the latest such time before the run's end; `YYYY-MM-DD HH:MM` is
+  exact; `-DURATION` (`-3h`, `-90m`, `-1h30m`) cuts that much off the end.
+- A running task is paused at the cut. `--stop` stops it there instead;
+  `--resume` pauses it there and resumes it now. A paused or stopped task
+  keeps its state; only the time its last run ended moves.
+- It applies at once, after copying the log to
+  `~/.claude/timer/backups/<project>.<epoch>.tsv` (path printed). No confirm.
+- Refused (exit 1, nothing changed) when the cut is not within the last run,
+  is after its end (trim only shortens) or is in the future. With several
+  tasks, one refusal stops them all. Older runs are fixed by hand in the log.
+- Without a time it only prints the last run. Without a task it uses the
+  session's task, else exits 2 listing the running tasks (else the paused
+  ones, else the last task); ask as in step 4 and rerun with the chosen task
+  **and the same time and flags**. `--all` acts on that same list.
+
+Never choose the cut time yourself. When the user gives none, run
+`timer.sh trim <task>` to show the run and ask them when the work ended.
+Never look for it in transcripts.
+
 ## day
 
 `day [DATE] [--all] [--split]` answers "what did I work on that day": every
@@ -190,7 +220,7 @@ scripts consume.
 - `timer.sh session-task` - this session's task
 - `timer.sh session-name` - the session's name, when it can be a task
 - `timer.sh where` - print the log file path
-- `timer.sh cancel <task>` - erase a task's entries entirely
+- `timer.sh cancel <task>` - erase a task's entries entirely (the log is backed up first, path printed)
 
 The log is a plain TSV (`task`, `event`, `epoch`, `timestamp`) at
 `~/.claude/timer/logs/<project>.tsv` and can be edited by hand if an entry is
