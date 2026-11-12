@@ -104,8 +104,8 @@ allows it for itself.
 `PROJECT · TIMER`:
 
 - `PROJECT` is the timer project.
-- `TIMER` is the session's task when it has a timer, else the first running
-  task of the project. `▶` running, `⏸` paused, `⏹` stopped or no timer
+- `TIMER` is `▶ TASK · TIME`: the session's task when it has a timer, else
+  the first running task of the project. `▶` running, `⏸` paused, `⏹` stopped or no timer
   (`‖` and `■` on Windows, where the terminal draws the others as wide emoji).
 - `+N running`: other tasks of the project running at the same time.
 

@@ -231,7 +231,7 @@ test('the footer shows the project of the session root and the session name as t
   const project = await ui.find({ type: 'Text', text: /·/ })
   expect(project?.text).toBe('my-repo · ')
   const timer = await ui.find({ type: 'Text', text: /▶/ })
-  expect(timer?.text).toBe('▶ XYZ-9 30m')
+  expect(timer?.text).toBe('▶ XYZ-9 · 30m')
   const others = await ui.find({ type: 'Text', text: /running/ })
   expect(others?.text).toBe(' +1 running')
   await ui.unmount()

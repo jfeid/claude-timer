@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Footer, TimerState } from '../types'
 
-// Shows "PROJECT · ▶ TASK 1h 05m" at the right of the prompt footer.
+// Shows "PROJECT · ▶ TASK · 1h 05m" at the right of the prompt footer.
 // Reads the same files as bin/timer.sh, resolved the same way:
 // project = TIMER_PROJECT, else the project of the session's named task, else
 // the basename of the git top level of the session's root folder; task = the
@@ -409,7 +409,7 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
     const icon = icons(isWindowsPath($.plugin.root))
     const timer = f.task
-      ? `${icon[f.state]} ${f.task} ${fmt(f.seconds)}`
+      ? `${icon[f.state]} ${f.task} · ${fmt(f.seconds)}`
       : `${icon.NONE} no timer`
     return (
       <Box>
